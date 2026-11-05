@@ -29,7 +29,7 @@
 
         # ── 备份 ─────────────────────────────────────────────────────
         backup:
-          root: 'D:\dsh-workspaces\local\delete-guard\backup'   # 备份根（不在 C: 用户配置目录）
+          root: 'backup'               # 备份根：相对插件目录解析（= <插件目录>/backup）；也可写绝对路径
           maxFileBytes: 268435456     # 单文件 256 MiB
           overFileLimit: 'block'      # 单文件超限：block（阻断）| record-only（只记占位，不推荐）
           maxBatchBytes: 10737418240  # 单批 10 GiB

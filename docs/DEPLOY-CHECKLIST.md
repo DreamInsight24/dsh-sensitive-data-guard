@@ -2,8 +2,10 @@
 
 - 插件：`@local/dsh-sensitive-data-guard@0.2.1`
 - 行 id：`dsh-sensitive-data-guard`
-- 插件目录：`D:\dsh-workspaces\local\delete-guard`
-- 备份根：`D:\dsh-workspaces\local\delete-guard\backup`
+- 插件目录：`<插件目录>`
+- 备份根：`backup/`（相对插件目录解析）
+
+> `<插件目录>` = 本插件所在目录（`package.json` 所在处）；`<工作区>` = 当前 DSH 会话的工作目录。下文相对路径都相对于 `<插件目录>`。
 
 按顺序做，每一步都写明「怎么确认成功」和「失败就回滚」。
 
@@ -12,7 +14,7 @@
 ## 1. 前置检查（1 分钟）
 
 - [ ] DSH Desktop 0.2.1-rc.2，profile 为 `desktop`
-- [ ] 插件目录完整：`D:\dsh-workspaces\local\delete-guard\package.json` 里
+- [ ] 插件目录完整：`package.json` 里
       `name` 为 `@local/dsh-sensitive-data-guard`、`version` 为 `0.2.1`
 - [ ] `package.json` 的 `dsh` 段同时含 `bundle.patch`（`./cordis.patch.yml`）与
       `client`（`platform: "web"`、`immediately: true`），`exports` 里有 `"./client"`
@@ -27,10 +29,10 @@
 
 ## 2. 安装（1 分钟）
 
-- [ ] 让模型执行：`plugin_manager` → `install_bundle`，target = `D:\dsh-workspaces\local\delete-guard`
+- [ ] 让模型执行：`plugin_manager` → `install_bundle`，target = `<插件目录>`
       （或在插件页用「本地目录安装」指向同一路径）
 - [ ] 预期返回：`"stage":"enable"`、`"application":"applied"`、`"warnings":[]`，
-      并显示 `+ @local/dsh-sensitive-data-guard 0.2.1 <- D:\dsh-workspaces\local\delete-guard`
+      并显示 `+ @local/dsh-sensitive-data-guard 0.2.1 <- <插件目录>`
 
 **确认成功**：返回里的 `application` 必须是 `applied`——它才是「已生效」的判据，
 不要用日志、进程列表或页面情况推断。
@@ -50,7 +52,7 @@
 ### 3.1 命令行自检
 
 - [ ] 让模型运行：
-      `node "D:\dsh-workspaces\local\delete-guard\bin\delete-guard.mjs" status`
+      `node "bin\delete-guard.mjs" status`
       （新入口 `bin\dsh-guard.mjs` 等价，旧名保留兼容）
 - [ ] 应看到：
       - `健康：正常`
@@ -99,7 +101,7 @@
 ### 3.5 工作区探测（确认「不干预」）
 
 - [ ] 让模型在**当前工作区内**建个临时目录并删除：
-      `New-Item -ItemType Directory 'D:\dsh-workspaces\_dg-deploy-ws' -Force; Remove-Item 'D:\dsh-workspaces\_dg-deploy-ws' -Recurse -Force`
+      `New-Item -ItemType Directory '<工作区>\_dg-deploy-ws' -Force; Remove-Item '<工作区>\_dg-deploy-ws' -Recurse -Force`
 - [ ] 应**直接成功**，不应出现确认码
 - [ ] 备份批次总数不变（`status` 前后对比 `批次：N`）
 
@@ -196,7 +198,7 @@ DEFAULTS（lib/defaults.js）
 卸载（保留备份）：
 
 - [ ] 插件页卸载，或用户执行 `plugin_manager remove_bundle @local/dsh-sensitive-data-guard`
-- [ ] 备份根不会被删除；需要腾空间时手工清理 `D:\dsh-workspaces\local\delete-guard\backup`
+- [ ] 备份根不会被删除；需要腾空间时手工清理 `backup`
 
 **回滚条件（出现任一即回滚）**：
 

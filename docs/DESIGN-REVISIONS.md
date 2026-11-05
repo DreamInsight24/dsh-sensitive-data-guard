@@ -1,6 +1,6 @@
 # 设计说明的实施修订（与 DESIGN.md 的差异）
 
-原始设计见 `D:\dsh-workspaces\local\delete-guard\DESIGN.md`（确认方案时的版本）。实施过程中确认了以下现实约束，
+原始设计见 `DESIGN.md`（确认方案时的版本）。实施过程中确认了以下现实约束，
 最终代码按本页修订执行；行为目标（先检查、先备份、失败即阻断）不变。
 
 ## 1. 本地 bundle 不能 import 随 dsh 发行的包
@@ -55,7 +55,7 @@ shell 深度层在 spawn 前把「允许根 + 易失根 + 过期时间」写成 
 
 ## 6. 迁移到 local/delete-guard（2026-11-05）
 
-用户要求把所有相关目录集中到 `D:\dsh-workspaces\local\delete-guard`：
+用户要求把所有相关目录集中到 `<插件目录>`：
 
 ```
 local/delete-guard/
@@ -65,9 +65,9 @@ local/delete-guard/
   fixtures/             演练与验证脚本（原 D:\dsh-workspaces\_dg-run）
 ```
 
-- 备份根默认值改为 `D:\dsh-workspaces\local\delete-guard\backup`（`lib/defaults.js`、`cordis.patch.yml`、`config.schema.json`）。
+- 备份根默认值改为插件目录下的 `backup`（相对写法；`lib/defaults.js`、`cordis.patch.yml`、`config.schema.json`）。见第 11 节。
 - 迁移用 `robocopy /E` 复制 + 校验后删除旧目录；批次、审计、`_store` 全部保留。
-- 重新注册：`remove_bundle` 旧 link → `install_bundle` 新路径；`@local/delete-guard 0.1.0 <- D:\dsh-workspaces\local\delete-guard`。
+- 重新注册：`remove_bundle` 旧 link → `install_bundle` 新路径；`@local/delete-guard 0.1.0 <- <插件目录>`。
 - 旧目录 `D:\dsh-workspaces\delete-guard`、`_delete-backup`、`delete-guard-docs`、`_dg-run` 已删除。
 
 ## 7. 分类器修复（迁移同轮）
@@ -113,7 +113,7 @@ local/delete-guard/
 | 管理 CLI | `bin/delete-guard.mjs` | `bin/dsh-guard.mjs`（`bin/delete-guard.mjs` 保留为等价入口） |
 | 设置路由 | — | `/plugins/dsh-sensitive-data-guard/settings` |
 
-插件目录仍然是 `D:\dsh-workspaces\local\delete-guard`（沿用第 6 节的迁移结果，未再搬家），
+插件目录仍然是 `<插件目录>`（沿用第 6 节的迁移结果，未再搬家），
 备份根、批次、审计全部原地保留。
 
 定位也变了：0.1.0 对**所有**破坏性操作一律先备份；0.2.0 的目标收窄为
@@ -257,7 +257,7 @@ DEFAULTS（lib/defaults.js） < bundle cordis.patch.yml 的 config < data/settin
 
 引入区域模型时的回归：`evaluate()` 里"工作区 → 直接 allow"的分支被放在
 `assertNotProtected()` **之前**，而插件目录本身就在工作区
-（`D:\dsh-workspaces\local\delete-guard`）之内 —— 于是删除/覆盖插件目录会被工作区短路放行，
+（`<插件目录>`）之内 —— 于是删除/覆盖插件目录会被工作区短路放行，
 自保护形同虚设。
 
 修复：把受保护目录检查提到区域分流之前，`evaluate()` 与 `prepareShell()` 两处都做：
@@ -279,3 +279,31 @@ if (zone === ZONE.WORKSPACE && this.policy.workspaceMode === 'none') { /* 放行
   保护目录优先级、设置文件与配置底线的合并；
 - 仍未覆盖：`cmd.exe` 的 `del`/`rd`、PTY、`python -E/-I`、第三方进程、插件未加载时的空窗、
   同权限任意代码写入。
+
+---
+
+## 11. 可移植性修订：插件目录相关的路径改为相对写法（2026-11-05）
+
+第一次把仓库整体交出去之前做的一次自查，发现「指向本插件目录」的路径全都写成了本机绝对路径，
+换机器就要么失效、要么把备份写到别的地方。改动如下：
+
+| 位置 | 改前 | 改后 |
+|---|---|---|
+| `lib/defaults.js` | `DEFAULT_BACKUP_ROOT = 'D:\dsh-workspaces\local\delete-guard\backup'` | 由 `PLUGIN_DIR` 推导：`path.join(PLUGIN_DIR, 'backup')` |
+| `lib/defaults.js` | — | `resolveConfig()` 现在把相对的 `backup.root` 按 `PLUGIN_DIR` 解析 |
+| `cordis.patch.yml` | `root: 'D:\dsh-workspaces\local\delete-guard\backup'` | `root: 'backup'`（相对插件目录） |
+| `config.schema.json` | `"default": "D:\\dsh-workspaces\\local\\delete-guard\\backup"` | `"default": "backup"`，description 说明按插件目录解析 |
+| `test/gate.test.mjs` | `TMP = D:\dsh-workspaces\_dg-run\gate-tmp\...`；断言 `cwdFor() === 'D:\dsh-workspaces'` | 由 `PLUGIN_DIR` 推导临时目录；cwd 断言用插件目录下的 fixture |
+| `test/protect.test.mjs` | `SETTINGS_DIR = D:\dsh-workspaces\_dg-run\protect-settings\...` | 由 `PLUGIN_DIR` 推导 |
+| 全部文档 | 绝对路径 | `<插件目录>` 占位符 + 相对路径 |
+
+要点：
+
+- `PLUGIN_DIR` 由 `import.meta.url` 推导（`lib/defaults.js` 里导出），不写死盘符；
+- 备份根解析顺序：绝对路径原样使用；相对路径按 `PLUGIN_DIR` 解析；
+- 文档里用 `<插件目录>` / `<工作区>` 两个占位符，正文中的 `bin/...`、`backup/` 都相对于插件目录；
+- 顺带清掉了测试报告里的会话 id 与 Windows 用户名。
+
+`test/core.test.mjs` 本来就用 `os.tmpdir()`，无需改动；它里面的 `D:\work`、`D:\data\victim`
+是喂给分类器的合成字符串，不是真实路径。第 6 节里那些 `D:\dsh-workspaces\...` 是当时的迁移记录，
+保留原样作为历史。

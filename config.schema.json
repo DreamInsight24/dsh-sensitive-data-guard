@@ -64,8 +64,8 @@
       "properties": {
         "root": {
           "type": "string",
-          "default": "D:\\dsh-workspaces\\local\\delete-guard\\backup",
-          "description": "备份根目录。必须与删除目标不同树；禁止指向 C: 用户配置目录。"
+          "default": "backup",
+          "description": "备份根目录。相对路径按插件目录解析（默认 'backup' = <插件目录>/backup），也可写绝对路径；必须与删除目标不同树，禁止指向 C: 用户配置目录。"
         },
         "maxFileBytes": {
           "type": "integer",

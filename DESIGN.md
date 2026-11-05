@@ -4,7 +4,9 @@
 > 面向要改代码的人；只想用的话看 `README.md`。
 > 目标机器：Windows，DSH Desktop 0.2.1-rc.2（desktop profile）。
 
-代码位置：`D:\dsh-workspaces\local\delete-guard`；包名 `@local/dsh-sensitive-data-guard`。
+代码位置：`<插件目录>`；包名 `@local/dsh-sensitive-data-guard`。
+
+> 下文 `<插件目录>` 指本插件所在目录（即 `package.json` 所在处）；`bin/...`、`backup/` 这类相对路径都相对于它——换机器、换安装位置都不用改。
 
 ---
 

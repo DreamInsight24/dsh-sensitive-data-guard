@@ -7,9 +7,11 @@
 
 - 插件包：`@local/dsh-sensitive-data-guard`（Host 插件 + Client 半 + bundle patch）
 - 版本：0.2.1；适配 DSH 0.2.1-rc.2（desktop profile）
-- 插件目录：`D:\dsh-workspaces\local\delete-guard`（目录名是历史遗留，包名才是准的）
-- 默认备份根：`D:\dsh-workspaces\local\delete-guard\backup`
+- 插件目录：`<插件目录>`（目录名是历史遗留，包名才是准的）
+- 默认备份根：`backup/`（相对插件目录解析）
 - 默认级别：`hard`
+
+> 下文 `<插件目录>` 指本插件所在目录（即 `package.json` 所在处）；`bin/...`、`backup/` 这类相对路径都相对于它——换机器、换安装位置都不用改。
 
 ---
 
@@ -67,7 +69,7 @@
 合计：1340 个文件，3.71 GB
 
 已经提前备份：2026-11-05/<session>/0007
-备份目录：D:\dsh-workspaces\local\delete-guard\backup\2026-11-05\<session>\0007
+备份目录：backup\2026-11-05\<session>\0007
 还原命令：node bin/delete-guard.mjs restore 2026-11-05/<session>/0007
 
 如确实要删除，请把下面的确认码发给我，我会带着它重新发起（备份已就绪，不会重复备份）：
@@ -89,7 +91,7 @@
 ## 4. 备份、保留与还原
 
 ```
-D:\dsh-workspaces\local\delete-guard\backup\
+backup\
   _store\<aa>\<bb>\<sha256>          内容寻址对象库（相同内容只存一份）
   2026-11-05\<sessionId>\0001\       批次桶
       manifest.jsonl                 首行 batch（含 zone）、逐文件记录、末行 summary
@@ -112,10 +114,10 @@ D:\dsh-workspaces\local\delete-guard\backup\
 还原（**用户操作**，会用旧内容覆盖当前文件）：
 
 ```powershell
-node "D:\dsh-workspaces\local\delete-guard\bin\delete-guard.mjs" restore latest --dry-run
-node "D:\dsh-workspaces\local\delete-guard\bin\delete-guard.mjs" restore 2026-11-05/<session>/0007
-node "D:\dsh-workspaces\local\delete-guard\bin\delete-guard.mjs" restore latest --to D:\restore-here
-node "D:\dsh-workspaces\local\delete-guard\bin\delete-guard.mjs" restore latest --force
+node "bin\delete-guard.mjs" restore latest --dry-run
+node "bin\delete-guard.mjs" restore 2026-11-05/<session>/0007
+node "bin\delete-guard.mjs" restore latest --to D:\restore-here
+node "bin\delete-guard.mjs" restore latest --force
 ```
 
 默认逐文件写回原路径；目标已存在时拒绝覆盖，`--force` 才覆盖；还原时校验 SHA-256。
@@ -128,7 +130,7 @@ node "D:\dsh-workspaces\local\delete-guard\bin\delete-guard.mjs" restore latest 
 
 1. **设置 → 敏感数据守卫**（设置面板里的独立一节）
 2. **插件 → 本插件页面**（bundle 自己的配置区，描述与 rows 之间）
-3. **文件**：`D:\dsh-workspaces\local\delete-guard\data\settings.json`
+3. **文件**：`data\settings.json`
 
 优先级：`lib/defaults.js` 默认值 **<** `cordis.patch.yml` 的 `config` **<** `data/settings.json`（设置页写入的）。
 
@@ -173,7 +175,7 @@ C:\Windows\System32
 `cordis.patch.yml` 的 `policy.protectedPaths` 是**部署底线**：设置页可以在它之上追加，
 但删不掉它（文本框下方会以只读小字列出这些条目）。
 
-**自动加入、不需要你手写**：插件目录自己（`D:\dsh-workspaces\local\delete-guard`）、
+**自动加入、不需要你手写**：插件目录自己（`<插件目录>`）、
 备份根、审计日志、profile 配置文件（`cordis.patch.yml` / `cordis.yml` / `package.json`）。
 
 判定顺序很关键：**保护目录检查发生在「工作区直接放行」之前**。也就是说，
@@ -198,7 +200,7 @@ C:\Windows\System32
 ## 8. 安装 / 停用
 
 ```text
-插件 → 添加 → 从本地目录安装 → D:\dsh-workspaces\local\delete-guard
+插件 → 添加 → 从本地目录安装 → <插件目录>
 ```
 
 或让模型调用 `plugin_manager` 的 `install_bundle`（绝对路径）。安装结果应为
@@ -207,7 +209,7 @@ C:\Windows\System32
 自检：
 
 ```powershell
-node "D:\dsh-workspaces\local\delete-guard\bin\delete-guard.mjs" status
+node "bin\delete-guard.mjs" status
 ```
 
 应看到备份根、健康状态、批次与占用、Sysmon 状态、钩子文件 `ok`。
@@ -254,7 +256,7 @@ node bin/delete-guard.mjs gc [--root DIR]
 ## 11. 目录结构
 
 ```
-D:\dsh-workspaces\local\delete-guard\
+<插件目录>\
   package.json            # bundle 清单（dsh.bundle.patch + dsh.client）
   cordis.patch.yml        # 插入核心行 + 默认 config（中文注释）
   index.js                # Host 半：门禁接线、shell 包装、设置路由

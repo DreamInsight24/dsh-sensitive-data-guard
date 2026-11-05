@@ -4,10 +4,12 @@
 - 机器：本机 Windows，DSH Desktop 0.2.1-rc.2，profile `desktop`
 - 插件：`@local/dsh-sensitive-data-guard@0.2.1`（0.2.0 的区域模型 + 本轮保护目录合并修复），
   安装方式 `plugin_manager install_bundle`（本地目录 link）
-- 插件目录：`D:\dsh-workspaces\local\delete-guard`
-- 备份根：`D:\dsh-workspaces\local\delete-guard\backup`
-- 会话：`session-d38bf6f0-7aa9-4b6f-aee1-544083f56d46`
+- 插件目录：`<插件目录>`
+- 备份根：`backup/`（相对插件目录解析）
+- 会话：`<session-id>`
 - 运行时：Node v24.22.0 / Python 3.13.2 / git 2.48.1
+
+> `<插件目录>` = 本插件所在目录（`package.json` 所在处）；`<工作区>` = 当前 DSH 会话的工作目录。文中相对路径都相对于 `<插件目录>`。
 
 ## 结论摘要
 
@@ -130,15 +132,15 @@
 ### 4.1 区域分流：工作区删除完全不干预
 
 ```
-新建 D:\dsh-workspaces\_dg-zonecheck\victim（a.txt、b.txt 两个文件）
-Remove-Item -LiteralPath 'D:\dsh-workspaces\_dg-zonecheck\victim' -Recurse -Force
+新建 <工作区>\_dg-zonecheck\victim（a.txt、b.txt 两个文件）
+Remove-Item -LiteralPath '<工作区>\_dg-zonecheck\victim' -Recurse -Force
 ```
 
 结果：命令成功，目录被删除。审计记录：
 
 ```json
 {"event":"gate","tool":"pwsh","plan":"scope","zone":"workspace",
- "targets":["D:\\dsh-workspaces"],"decision":"allow","batchId":null}
+ "targets":["<工作区>"],"decision":"allow","batchId":null}
 ```
 
 备份批次总数在执行前后均为 35，**没有新增任何批次**——工作区确认不备份。
@@ -166,7 +168,7 @@ Remove-Item -LiteralPath 'D:\__dg-nonexistent-check__' -Recurse -Force
 合计：0 个文件，0 B
 
 已经提前备份：(无可备份文件)
-备份目录：D:\dsh-workspaces\local\delete-guard\backup
+备份目录：backup
 还原命令：node bin/delete-guard.mjs restore (无可备份文件)
 
 如确实要删除，请把下面的确认码发给我，我会带着它重新发起（备份已就绪，不会重复备份）：
@@ -219,7 +221,7 @@ POST {{"triggerLevel":"hard", ...}}
 
 ```json
 {"tool":"pwsh","plan":"scope","zone":"workspace",
- "targets":["C:\\Users\\O1529\\.dsh\\profiles\\desktop"]}
+ "targets":["C:\\Users\\<用户名>\\.dsh\\profiles\\desktop"]}
 ```
 
 修复后（`ctx.get('workingDirectory')` → `ensure()` → `wd.get(session)` → `agent.session.header.cwd`
@@ -227,7 +229,7 @@ POST {{"triggerLevel":"hard", ...}}
 同一类调用的基准变为：
 
 ```json
-{"tool":"pwsh","plan":"scope","zone":"workspace","targets":["D:\\dsh-workspaces"],"decision":"allow","batchId":null}
+{"tool":"pwsh","plan":"scope","zone":"workspace","targets":["<工作区>"],"decision":"allow","batchId":null}
 ```
 
 ### 4.7 保护目录优先级
@@ -243,7 +245,7 @@ POST {{"triggerLevel":"hard", ...}}
 1. 确认插件已启用（`plugin_manager list_plugins` 或设置页可见）。
 2. `status` 自检：
    ```
-   node "D:\dsh-workspaces\local\delete-guard\bin\delete-guard.mjs" status
+   node "bin\delete-guard.mjs" status
    ```
 3. 自动化测试**必须逐个文件跑**：
    ```
@@ -253,7 +255,7 @@ POST {{"triggerLevel":"hard", ...}}
    ```
    > 不要用 `node --test test/`：本机沙箱下该形式会用 piped stdio 起子进程，
    > 报 `spawn EPERM`（`errno: -4048`），不是测试失败。
-4. 审计日志：`D:\dsh-workspaces\local\delete-guard\backup\_audit\YYYY-MM-DD.jsonl`。
+4. 审计日志：`backup\_audit\YYYY-MM-DD.jsonl`。
 5. 还原/校验脚本：`fixtures\_dg-run\restore-runner.mjs`、`verify-batch.mjs`（仅测试用，不属于插件交付物）。
 6. 若需要修改插件源码：先由用户在「设置 → 插件」停用（插件目录受自保护，模型无法改写）。
 

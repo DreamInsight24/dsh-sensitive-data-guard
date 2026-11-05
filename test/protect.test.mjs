@@ -3,11 +3,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { compileProtectPatterns, isProtectedByPatterns, patternCoversTarget } from '../lib/paths.js';
 import { GateCore } from '../lib/gate.js';
 
 // 设置文件必须隔离：仓库里的 data/settings.json 不能影响单元测试。
-const SETTINGS_DIR = path.join('D:\\dsh-workspaces', '_dg-run', 'protect-settings', `${process.pid}`);
+// 临时目录放在插件目录的兄弟目录 _dg-run 下，跟着插件走，不绑机器。
+const PLUGIN_DIR = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
+const SETTINGS_DIR = path.join(PLUGIN_DIR, '..', '_dg-run', 'protect-settings', `${process.pid}`);
 
 test('protect: User/* 保护、!User/WorkSpace 放行', () => {
   const p = compileProtectPatterns(['User/*', '!User/WorkSpace']);

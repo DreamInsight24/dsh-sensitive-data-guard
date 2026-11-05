@@ -6,10 +6,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { GateCore } from '../lib/gate.js';
 
-const TMP = path.join('D:\\dsh-workspaces', '_dg-run', 'gate-tmp', `${process.pid}-${Date.now()}`);
+// 插件根目录：临时目录放在它的兄弟目录 _dg-run 下，跟着插件走，不绑机器。
+const PLUGIN_DIR = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
+const TMP = path.join(PLUGIN_DIR, '..', '_dg-run', 'gate-tmp', `${process.pid}-${Date.now()}`);
 
 function fakeCtx() {
   return {
@@ -222,8 +225,9 @@ test('设置文件里的空 protectedPaths 不能清空配置里的保护目录'
 
 test('cwdFor：服务缺失时回落到 Session 头里的 cwd', async () => {
   const core = new GateCore(fakeCtx(), { backup: { root: path.join(TMP, 'root-cwd') } });
-  const exec = { agent: { id: 's', session: { header: { cwd: 'D:\\dsh-workspaces' } } } };
-  assert.equal(await core.cwdFor(exec), 'D:\\dsh-workspaces');
+  const cwdFixture = path.join(PLUGIN_DIR, '..', '_dg-run', 'cwd-fixture');
+  const exec = { agent: { id: 's', session: { header: { cwd: cwdFixture } } } };
+  assert.equal(await core.cwdFor(exec), cwdFixture);
   core.dispose();
 });
 

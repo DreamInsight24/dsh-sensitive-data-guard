@@ -1,0 +1,247 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://local/dsh-sensitive-data-guard/config.schema.json",
+  "title": "敏感数据守卫（Sensitive Data Guard）配置",
+  "description": "敏感数据守卫 0.2.1 的配置结构。实际生效值按三级优先顺序合成：DEFAULTS（lib/defaults.js） < bundle 的 cordis.patch.yml（或用户 profile patch 里按行 id 覆盖的 config） < 插件目录下 data/settings.json（DSH 设置页写入）。深合并规则：对象逐层合并，数组与标量整体覆盖。唯一例外是 policy.protectedPaths：它不做覆盖，而是「配置底线 ∪ 设置页追加」，配置里声明的条目设置页删不掉。",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "总开关。只有手工改配置才能关闭门禁；模型无法关闭。"
+    },
+    "emergencyBypass": {
+      "type": "boolean",
+      "default": false,
+      "description": "逃生开关。true 时所有删除直接放行（只写审计事件 bypass），默认关闭；只允许用户手工改配置打开。"
+    },
+    "failClosed": {
+      "type": "boolean",
+      "default": true,
+      "description": "插件内部异常时是否阻断。硬性要求保持 true。"
+    },
+    "shellSeam": {
+      "type": "boolean",
+      "default": true,
+      "description": "是否启用 shell 深度层：包装运行中的 ctx.shell 实例的 execute，在 spawn 前完成分区判定与备份，并向子进程注入 Python/Node 运行时钩子。"
+    },
+    "hooks": {
+      "type": "object",
+      "additionalProperties": false,
+      "default": {},
+      "description": "对子进程注入的运行时钩子开关。钩子读取 shell 深度层写出的允许清单，越界删除一律拒绝（fail-closed）。",
+      "properties": {
+        "python": {
+          "type": "boolean",
+          "default": true,
+          "description": "通过 PYTHONPATH 注入 sitecustomize，拦截 os.remove/os.unlink/os.truncate/os.rmdir/shutil.rmtree 等。"
+        },
+        "node": {
+          "type": "boolean",
+          "default": true,
+          "description": "通过 NODE_OPTIONS=--require 注入，拦截 fs.rm/rmSync/rmdir/unlink/rename 等。"
+        }
+      }
+    },
+    "sysmon": {
+      "type": "object",
+      "additionalProperties": false,
+      "default": {},
+      "description": "Sysmon 状态检测（只读）。",
+      "properties": {
+        "warnOnly": {
+          "type": "boolean",
+          "default": true,
+          "description": "只检测并在审计里记录 Sysmon 状态，绝不修改服务。保持 true。"
+        }
+      }
+    },
+    "backup": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "备份引擎与保留策略。备份根、插件目录、审计目录恒为受保护路径。",
+      "properties": {
+        "root": {
+          "type": "string",
+          "default": "D:\\dsh-workspaces\\local\\delete-guard\\backup",
+          "description": "备份根目录。必须与删除目标不同树；禁止指向 C: 用户配置目录。"
+        },
+        "maxFileBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 268435456,
+          "description": "单文件上限（字节），默认 256 MiB。超过按 overFileLimit 处理。"
+        },
+        "overFileLimit": {
+          "type": "string",
+          "enum": ["block", "record-only"],
+          "default": "block",
+          "description": "单文件超限策略：block 阻断（默认，保证可还原）；record-only 只记占位并放行（不推荐）。"
+        },
+        "maxBatchBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 10737418240,
+          "description": "单批备份总量上限（字节），默认 10 GiB。"
+        },
+        "maxBatchFiles": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 50000,
+          "description": "单批备份文件数上限，默认 50000。"
+        },
+        "quotaBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 53687091200,
+          "description": "备份总配额（字节），默认 50 GiB。超过后新的备份一律阻断，绝不把磁盘打满。"
+        },
+        "retentionDays": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 30,
+          "description": "敏感区（以及历史遗留无分区标记的批次）的保留天数，默认 30。到期批次自动清理，审计日志永不删除。"
+        },
+        "dshRetentionCount": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 10,
+          "description": ".dsh 区域只保留最新多少个批次（按 manifest 的 mtime 倒序取前 N 个）。0 表示不按数量裁剪。与 dshRetentionDays 是「或」的关系：超出数量或超过天数任一成立即清理。"
+        },
+        "dshRetentionDays": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 30,
+          "description": ".dsh 区域的保留天数上限，默认 30。0 表示不按天数裁剪。"
+        },
+        "autoCleanup": {
+          "type": "boolean",
+          "default": true,
+          "description": "插件启动 3 秒后自动执行一次分区清理。"
+        },
+        "dedupe": {
+          "type": "boolean",
+          "default": true,
+          "description": "内容寻址去重：相同 SHA-256 只存一份。"
+        },
+        "verify": {
+          "type": "boolean",
+          "default": true,
+          "description": "复制时校验大小；还原时校验 SHA-256。"
+        },
+        "followSymlinks": {
+          "type": "boolean",
+          "default": false,
+          "description": "是否跟随软链接/junction。默认只记录链接本身，不跟随、不复制内容。"
+        },
+        "exclusions": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "白名单式排除表（绝对路径）。默认不排除任何路径。"
+        },
+        "concurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 4,
+          "description": "并行复制数。"
+        },
+        "mirrorTree": {
+          "type": "boolean",
+          "default": true,
+          "description": "批次目录内建硬链接镜像（便于人工浏览；跨卷时退化为复制）。"
+        }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "分区判定、提醒级别与保护目录。",
+      "properties": {
+        "triggerLevel": {
+          "type": "string",
+          "enum": ["soft", "medium", "hard"],
+          "default": "hard",
+          "description": "敏感区的提醒级别，可在 DSH「设置 → 敏感数据守卫」页里改。soft：仅备份，不提醒也不阻断；medium：文件数 ≥ mediumMinFiles 或体积 ≥ mediumMinBytes 才提醒；hard（默认）：敏感区任何删除/覆盖都先备份再要 4 位确认码。工作区不受该级别影响。"
+        },
+        "mediumMinFiles": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 10,
+          "description": "medium 级别的文件数阈值。达标即要求确认码。"
+        },
+        "mediumMinBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 67108864,
+          "description": "medium 级别的体积阈值（字节），默认 64 MiB。与文件数阈值是「或」的关系。"
+        },
+        "dshHome": {
+          "type": "string",
+          "default": "",
+          "description": ".dsh 根目录覆盖值。留空时依次取 $DSH_HOME、$DSH_PROFILE_DIR 的父目录、%USERPROFILE%\\.dsh。用于判定 dsh 区域。"
+        },
+        "workspaceMode": {
+          "type": "string",
+          "enum": ["none"],
+          "default": "none",
+          "description": "工作区（当前会话 cwd）的处理方式。none = 完全不保护：不备份、不提醒、不阻断，只写审计（默认，也是唯一受支持的取值）。改成其它值会让工作区按敏感区流程处理（先备份、必要时要求确认码），不推荐。"
+        },
+        "unknownTool": {
+          "type": "string",
+          "enum": ["deny", "allow-audit"],
+          "default": "deny",
+          "description": "不在安全清单里的工具：deny 阻断（默认）或 allow-audit 放行并审计。"
+        },
+        "opaqueCommand": {
+          "type": "string",
+          "enum": ["scope", "block"],
+          "default": "scope",
+          "description": "解析不出目标路径的 shell 命令：scope 把整个工作目录作为范围处理（默认）或 block 直接阻断。"
+        },
+        "scopeRoots": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "额外的范围根：scope 类判定时一并纳入备份范围。受保护目录检查对它们同样生效。"
+        },
+        "safeTools": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "追加的只读工具名（并入内置安全清单）。"
+        },
+        "safeCommands": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "追加的只读命令正则（字符串形式）。"
+        },
+        "volatileRoots": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [
+            "%TEMP%",
+            "%LOCALAPPDATA%\\Temp",
+            "%LOCALAPPDATA%\\npm-cache",
+            "%APPDATA%\\npm-cache",
+            "%LOCALAPPDATA%\\pnpm",
+            "%LOCALAPPDATA%\\pnpm-cache",
+            "%APPDATA%\\pnpm",
+            "%LOCALAPPDATA%\\Yarn",
+            "%USERPROFILE%\\.npm",
+            "%USERPROFILE%\\.cache"
+          ],
+          "description": "运行时钩子额外允许删除的易失目录（临时目录、包管理器缓存）。这些目录本来就可以随时删除；不放开会让 npm/pnpm 安装直接失败。"
+        },
+        "protectedPaths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "额外受保护目录，采用 .gitignore 风格模式：用 / 分隔、大小写不敏感；可带盘符（D:/xxx），不带盘符匹配任意盘；'*' 匹配一段，'**' 跨段，'?' 匹配单字符；以 '!' 开头表示放行（排除），后写的模式覆盖先写的；不含 '/' 的模式匹配任意层级，含 '/' 的模式从盘根锚定（任意深度用 '**/' 前缀）；目录被保护时其下所有内容一并受保护，删除「包含受保护目录的上级」同样被阻断。这些目录在任何级别下都禁止修改/删除，且判定发生在「工作区不保护」的短路之前。示例：['User/*', '!User/WorkSpace'] 表示保护 User 下所有内容但放行 User/WorkSpace。插件目录、备份根、审计目录、profile 配置文件会自动加入，无需在此重复。【合并语义】这里声明的是「配置底线」：最终生效值 = 配置底线 ∪ 设置页追加的条目（去重、保持顺序），设置页只能往上追加，删不掉这里声明的条目（界面以只读小字列出）。data/settings.json 里只保存设置页那一份，空数组不会清空配置。"
+        }
+      }
+    }
+  }
+}

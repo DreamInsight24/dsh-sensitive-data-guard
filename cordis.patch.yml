@@ -1,0 +1,75 @@
+# 敏感数据守卫（DSH Sensitive Data Guard）bundle patch。
+#
+# 只插入一行：核心门禁 dsh-sensitive-data-guard。
+# shell 深度层不替换任何 shipped 行，而是在插件里包装当前 ctx.shell 实例的
+# execute 方法（见 index.js），因此不需要覆盖 pwsh-sandbox / bash-sandbox。
+#
+# 注意：patch 里 config 是整行配置；用户可在自己的
+# C:\Users\<你>\.dsh\profiles\desktop\cordis.patch.yml 里按 id 覆盖部分字段，
+# 也可以在 DSH 的「设置 → 敏感数据守卫」或「插件 → 敏感数据守卫」页面里改
+# （级别 + 追加保护目录；这里写的 protectedPaths 是底线，页面删不掉）。
+
+- insert:
+    - id: dsh-sensitive-data-guard
+      name: '@local/dsh-sensitive-data-guard'
+      config:
+        # ── 总开关与逃生 ─────────────────────────────────────────────
+        enabled: true                 # 只有手工改配置才能关闭门禁
+        emergencyBypass: false        # 逃生开关：true 后所有删除直接放行（只审计），默认关
+        failClosed: true              # 插件内部异常时阻断（保持 true）
+        shellSeam: true               # 是否启用 shell 深度层（覆盖 python/node 孙进程）
+
+        # ── 运行时钩子 ───────────────────────────────────────────────
+        hooks:
+          python: true                # PYTHONPATH 注入 sitecustomize，拦截 os.remove/shutil.rmtree 等
+          node: true                  # NODE_OPTIONS=--require，拦截 fs.rmSync/rm/unlink 等
+
+        sysmon:
+          warnOnly: true              # 只检测、告警；绝不修改 Sysmon 服务
+
+        # ── 备份 ─────────────────────────────────────────────────────
+        backup:
+          root: 'D:\dsh-workspaces\local\delete-guard\backup'   # 备份根（不在 C: 用户配置目录）
+          maxFileBytes: 268435456     # 单文件 256 MiB
+          overFileLimit: 'block'      # 单文件超限：block（阻断）| record-only（只记占位，不推荐）
+          maxBatchBytes: 10737418240  # 单批 10 GiB
+          maxBatchFiles: 50000        # 单批 5 万个文件
+          quotaBytes: 53687091200     # 总配额 50 GiB（超过后新备份一律阻断）
+          retentionDays: 30           # 敏感区保留 30 天
+          dshRetentionCount: 10       # .dsh 区只保留最新 10 个批次
+          dshRetentionDays: 30        # 且不超过 30 天
+          autoCleanup: true           # 自动清理过期批次（不删审计）
+          dedupe: true                # 内容寻址去重
+          verify: true                # 复制后校验大小；还原时校验哈希
+          followSymlinks: false       # 软链接/junction 只记录不跟随
+          exclusions: []              # 白名单式排除表：默认不排除任何路径
+          concurrency: 4              # 并行复制数
+          mirrorTree: true            # 批次内建硬链接镜像，便于人工查看
+
+        # ── 判定策略 ─────────────────────────────────────────────────
+        policy:
+          # 区域模型：
+          #   工作区（当前会话 cwd）      → 完全不保护（不备份、不提醒、不阻断）
+          #   .dsh（含 .dsh 自身）        → 静默自动备份，不提醒
+          #   敏感区（两者之外的一切）    → 备份 + 硬提醒（4 位确认码）
+          workspaceMode: 'none'
+          dshHome: ''                 # 留空 = $DSH_HOME 或 %USERPROFILE%\.dsh
+          # 提醒级别：soft（仅备份）| medium（达阈值才提醒）| hard（一律提醒，默认）
+          triggerLevel: 'hard'
+          mediumMinFiles: 10          # medium 级别：文件数达到即提醒
+          mediumMinBytes: 67108864    # medium 级别：体积达到即提醒（64 MiB）
+
+          unknownTool: 'deny'         # 未知工具：deny（默认）| allow-audit
+          opaqueCommand: 'scope'      # 解析不出的 shell 命令：scope（整目录先备份，默认）| block
+          scopeRoots: []              # 额外保护根
+          safeTools: []               # 追加只读工具名
+          safeCommands: []            # 追加只读命令正则
+          volatileRoots: ['%TEMP%', '%LOCALAPPDATA%\Temp', '%LOCALAPPDATA%\npm-cache', '%APPDATA%\npm-cache', '%LOCALAPPDATA%\pnpm', '%APPDATA%\pnpm', '%LOCALAPPDATA%\Yarn', '%USERPROFILE%\.npm', '%USERPROFILE%\.cache']  # 钩子允许删除的易失目录（临时/包缓存）
+          # 额外受保护目录（.gitignore 风格模式，支持 ! 排除；插件目录/备份根/审计自动加入）。
+          # 这些目录在任何级别下都禁止修改（包括本插件自己）。
+          # 示例：保护 User 下所有内容，但放行 User/WorkSpace：
+          #   protectedPaths:
+          #     - 'User/*'
+          #     - '!User/WorkSpace'
+          # 含 '/' 的模式从盘根锚定；想匹配任意深度用 '**/' 前缀，如 '**/_dg-protect/*'。
+          protectedPaths: []

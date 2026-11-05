@@ -1,0 +1,6 @@
+# 统一行尾：仓库内一律 LF（Windows 检出/提交时不再来回转换）
+* text=auto eol=lf
+
+# 二进制与非文本
+*.svg text
+*.pyc binary

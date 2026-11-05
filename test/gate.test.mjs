@@ -138,7 +138,7 @@ test('区域模型：工作区不备份、敏感区备份并要求确认码', as
 
   const core = new GateCore(fakeCtx(), {
     backup: { root, maxBatchFiles: 1000, maxBatchBytes: 1e12, quotaBytes: 1e12 },
-    policy: { triggerLevel: 'hard' },
+    policy: { triggerLevel: 'hard', confirmVia: 'code' },
   });
   await core.start();
   assert.equal(core.ready, true, core.initError ?? '');
@@ -180,7 +180,7 @@ test('回归：PowerShell .NET 删除（变量路径）现在能定位目标 →
 
   const core = new GateCore(fakeCtx(), {
     backup: { root, maxBatchFiles: 1000, maxBatchBytes: 1e12, quotaBytes: 1e12 },
-    policy: { triggerLevel: 'hard' },
+    policy: { triggerLevel: 'hard', confirmVia: 'code' },
   });
   await core.start();
   assert.equal(core.ready, true, core.initError ?? '');
@@ -231,7 +231,7 @@ test('目标解析不出：走确认码放行（无备份），报告必须写�
 
   const core = new GateCore(fakeCtx(), {
     backup: { root, maxBatchFiles: 1000, maxBatchBytes: 1e12, quotaBytes: 1e12 },
-    policy: { triggerLevel: 'hard' },
+    policy: { triggerLevel: 'hard', confirmVia: 'code' },
   });
   await core.start();
   assert.equal(core.ready, true, core.initError ?? '');
@@ -279,6 +279,126 @@ test('目标解析不出：走确认码放行（无备份），报告必须写�
   assert.equal(allow.allowAll, true);
   assert.deepEqual(allow.roots, []);
 
+  core.dispose();
+});
+
+/**
+ * 带「用户问答服务」的假 ctx：模拟 DSH 把问题弹到用户界面上。
+ * choice 决定用户点了什么：allow（允许执行）/ deny（拦截）/ 抛错（模拟没有 UI 客户端）。
+ */
+function fakeCtxWithUser(choice) {
+  const agent = { id: 'session-test' };
+  const seen = [];
+  const ctx = {
+    logger: { info() {}, warn() {}, error() {} },
+    workingDirectory: null,
+    seen,
+    get(name) {
+      if (name === 'agents') {
+        return { get: (id) => (id === 'session-test' ? agent : undefined), roots: () => [agent] };
+      }
+      if (name === 'userQuestions') {
+        return {
+          async ask(request) {
+            seen.push(request);
+            if (choice === 'throw') {
+              const error = new Error('no user-questions answerer accepted the request');
+              error.code = 'NO_PROVIDER';
+              throw error;
+            }
+            return {
+              answers: [{
+                id: request.questions[0].id,
+                selected: [choice === 'allow' ? '允许执行' : '拦截'],
+              }],
+            };
+          },
+        };
+      }
+      return undefined;
+    },
+  };
+  return ctx;
+}
+
+test('弹窗确认：用户点「允许执行」就直接放行，全程没有确认码', async () => {
+  const root = path.join(TMP, 'root-popup-allow');
+  const work = path.join(TMP, 'popup-work');
+  const target = path.join(TMP, 'popup-target');
+  fs.mkdirSync(target, { recursive: true });
+  fs.writeFileSync(path.join(target, 'a.txt'), 'a');
+
+  const ctx = fakeCtxWithUser('allow');
+  const core = new GateCore(ctx, { backup: { root } });
+  await core.start();
+  assert.equal(core.ready, true, core.initError ?? '');
+
+  const exec = execFor(`Remove-Item -Recurse -Force "${target}"`, work, 'call-popup-allow');
+  const decision = await core.onPreExecute(exec, async () => ({ kind: 'allow' }));
+  assert.equal(decision.kind, 'allow', '用户在弹窗里点了允许，这一次就应该放行');
+  assert.equal(core.tokens.get('call-popup-allow').batchId !== null, true, '放行前必须已经备份');
+  assert.equal(core.guard(exec), undefined);
+
+  // 问题确实发给了用户，正文里带目标与备份信息；且**没有任何确认码**留给模型。
+  assert.equal(ctx.seen.length, 1, '应该只问一次');
+  const question = ctx.seen[0].questions[0];
+  assert.match(question.detail, /popup-target/, '弹窗里要写清楚删的是哪儿');
+  assert.match(question.detail, /已经提前备份/);
+  assert.doesNotMatch(JSON.stringify(question), /确认码：\d{4}/);
+  assert.deepEqual(question.options.map((o) => o.label), ['允许执行', '拦截']);
+
+  core.dispose();
+});
+
+test('弹窗确认：用户点「拦截」→ 阻断，且不给确认码', async () => {
+  const root = path.join(TMP, 'root-popup-deny');
+  const work = path.join(TMP, 'popup-work2');
+  const target = path.join(TMP, 'popup-target2');
+  fs.mkdirSync(target, { recursive: true });
+  fs.writeFileSync(path.join(target, 'a.txt'), 'a');
+
+  const core = new GateCore(fakeCtxWithUser('deny'), { backup: { root } });
+  await core.start();
+  const exec = execFor(`Remove-Item -Recurse -Force "${target}"`, work, 'call-popup-deny');
+  const decision = await core.onPreExecute(exec, async () => ({ kind: 'allow' }));
+  assert.equal(decision.kind, 'deny');
+  assert.match(String(decision.reason), /拦截/);
+  assert.doesNotMatch(String(decision.reason), /确认码：\d{4}/, '弹窗模式下不应该再出现 4 位确认码');
+  assert.equal(core.tokens.has('call-popup-deny'), false);
+  core.dispose();
+});
+
+test('弹窗确认：问不到用户（没有 UI 客户端）→ fail-closed 阻断', async () => {
+  const root = path.join(TMP, 'root-popup-none');
+  const work = path.join(TMP, 'popup-work3');
+  const target = path.join(TMP, 'popup-target3');
+  fs.mkdirSync(target, { recursive: true });
+  fs.writeFileSync(path.join(target, 'a.txt'), 'a');
+
+  const core = new GateCore(fakeCtxWithUser('throw'), { backup: { root } });
+  await core.start();
+  const exec = execFor(`Remove-Item -Recurse -Force "${target}"`, work, 'call-popup-none');
+  const decision = await core.onPreExecute(exec, async () => ({ kind: 'allow' }));
+  assert.equal(decision.kind, 'deny');
+  assert.match(String(decision.reason), /fail-closed/);
+  assert.doesNotMatch(String(decision.reason), /确认码：\d{4}/);
+  core.dispose();
+});
+
+test('弹窗确认：目标解析不出时同样弹窗，并写明没有备份', async () => {
+  const root = path.join(TMP, 'root-popup-unresolved');
+  const work = path.join(TMP, 'popup-work4');
+  fs.mkdirSync(work, { recursive: true });
+
+  const ctx = fakeCtxWithUser('allow');
+  const core = new GateCore(ctx, { backup: { root } });
+  await core.start();
+  const command = 'Remove-Item -LiteralPath $env:DSH_NOPE -Recurse -Force';
+  const exec = execFor(command, work, 'call-popup-unres');
+  const decision = await core.onPreExecute(exec, async () => ({ kind: 'allow' }));
+  assert.equal(decision.kind, 'allow');
+  assert.equal(core.tokens.get('call-popup-unres').allowAll, true);
+  assert.match(ctx.seen[0].questions[0].detail, /没有备份/);
   core.dispose();
 });
 

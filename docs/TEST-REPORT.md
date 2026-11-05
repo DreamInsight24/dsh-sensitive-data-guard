@@ -393,3 +393,60 @@ Get-ChildItem -LiteralPath $target -File -Force | ForEach-Object {
 - 解释器内部**动态路径**（`fs.rmSync(p)`）仍是 `scope`；这类靠 L2 钩子在运行时兜底，
   只有 PowerShell 原生的 .NET 删除没有钩子可兜，所以只有它走到了确认码流程；
 - 字符串屏蔽是启发式的，`eval`/`child_process` 存在时退回全文扫描（宁可误报）。
+
+
+---
+
+## 九、v0.2.4 修订：确认码换成直接弹窗（2026-11-06）
+
+### 9.1 触发原因
+
+0.2.3 的确认码写在**工具返回值**里。用户实测后指出：模型自己就读得到那个 4 位码，
+也完全可以自己填回去——「人在环路里」实际上没成立。要求改成「立刻弹给用户、
+Agent 看不见、用户在弹窗里直接允许或拦截，不需要和 Agent 交互」。
+
+### 9.2 依据（对着 DSH 源码核过）
+
+从 `app.asar` 里取出 `@deepseek-ai/dsh-user-questions`、`@deepseek-ai/dsh-tool-ask-user`、
+`@deepseek-ai/dsh-client-ui-user-questions` 三个包确认：
+
+- `ctx.userQuestions.ask({ questions, agent, signal })` 是 `ask_user_question` 工具自己的通道，
+  返回值**只回到调用方**；不带 `wait.callId` 时客户端仍会建卡片，settle 后移除。
+- 客户端渲染 `header / question / detail / options`，`detail` 用 `<Text>` 原样显示（可多行），
+  正好用来放删除清单与备份信息。
+- `ask()` 要求传真实存活的**根**代理：`CALLER_NOT_LIVE` / `DELEGATED_CALLER` 直接抛错，
+  所以子代理问不到人，天然 fail-closed。
+
+### 9.3 改动
+
+| 位置 | 改动 |
+|---|---|
+| `lib/gate.js` | 新增 `askHuman()`：走 `ctx.get('userQuestions').ask()`，只认「允许执行」一个选项；超时与 `exec.signal` 用 `AbortSignal.any` 合并；任何异常/拒绝都返回不放行 |
+| `lib/gate.js` | 新增 `promptUser()`：把弹窗结果映射成 allow/deny，审计记 `popup-allowed` / `popup-rejected` / `popup-unavailable` |
+| `lib/gate.js` | `guardSensitive()` / `guardUnresolved()` 在 `confirmVia: 'popup'` 下改为弹窗；`code` 模式保留旧流程 |
+| `lib/gate.js` | 新增 `liveAgentOf(sessionId)`：shell 深度层没有 exec 里的 agent，按会话把它换回来 |
+| `lib/confirm.js` | 新增 `buildPromptDetail()`（弹窗正文，不含确认码）、`buildDeclinedText()`、`buildUnavailableText()` |
+| `lib/defaults.js` / `config.schema.json` | 新增 `policy.confirmVia`（popup 默认 / code）、`policy.confirmTimeoutMs`（默认 5 分钟） |
+
+### 9.4 新增用例与结果
+
+| 文件 | 用例数 | 通过 | 失败 |
+|---|---:|---:|---:|
+| `test/core.test.mjs` | 37 | 37 | 0 |
+| `test/gate.test.mjs` | 13 | 13 | 0 |
+| `test/protect.test.mjs` | 5 | 5 | 0 |
+| **合计** | **55** | **55** | **0** |
+
+新增：
+
+- `gate`：用户点「允许执行」→ 直接放行且**全程没有确认码**（并断言弹窗正文里带目标路径与备份信息）；
+- `gate`：用户点「拦截」→ 阻断且不下发确认码；
+- `gate`：问答服务报 `NO_PROVIDER`（没有 UI 客户端）→ fail-closed 阻断；
+- `gate`：目标解析不出时同样弹窗，正文含「没有备份」，令牌带 `allowAll`。
+
+原有的三条确认码用例改为显式 `confirmVia: 'code'`，保证旧通道不回归。
+
+### 9.5 仍未覆盖
+
+- 真机弹窗的**视觉呈现**只能人工确认（自动化测试用假 `userQuestions` 校验的是决策链）；
+- 关掉浏览器/纯 CLI 时无法弹窗，按设计一律阻断（可切 `confirmVia: 'code'`）。

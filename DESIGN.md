@@ -115,8 +115,8 @@ guardSensitive(...) → allow | deny(报告)
 |---|---|---|---|---|
 | 工作区 | allow | allow | allow | allow |
 | `.dsh` | allow + 静默备份 | 同左 | 同左 | 同左 |
-| 敏感区 | allow + 备份 | allow + 备份 | **deny + 确认码** | **deny + 确认码** |
-| 目标解析不出 | **deny + 确认码（无备份）** | 同左 | 同左 | 同左 |
+| 敏感区 | allow + 备份 | allow + 备份 | **弹窗确认** | **弹窗确认** |
+| 目标解析不出 | **弹窗确认（无备份）** | 同左 | 同左 | 同左 |
 | 保护目录 | deny | deny | deny | deny |
 
 `needsConfirm(zone, stats)` 只在 `zone === sensitive` 时可能为真；
@@ -128,14 +128,35 @@ guardSensitive(...) → allow | deny(报告)
 |---|---|---|
 | 备份 | 先备份（可 `restore`） | **不备份**（目标运行时才确定） |
 | 触发条件 | 区域 + 级别 | 分类器拿不到字面量目标 |
-| 报告 | 「已提前备份 + 批次号」 | 「❗ 本次没有备份」置于正文最前 |
+| 弹窗正文 | 「已提前备份 + 批次号」 | 「❗ 这次没有备份」 |
 | 放行令牌 | `roots = 备份根集` | `roots = []` + **`allowAll: true`** |
 
 `allowAll` 只在这条路径上出现，作用是让确认过的命令派生出的 python/node 子进程不被
 L2 钩子全拒（否则「确认了也执行不了」）。它等价于「用户对这条命令的删除范围负全责」。
 策略开关 `policy.unresolvedAction`：`confirm`（默认）/ `deny` / `scope`。
 
-### 4.3 兜底层
+### 4.3 确认通道（0.2.4）
+
+```
+确认通道确认问谁            popup（默认）                     code（旧）
+──────────────────────────────────────────────────────────────────────────
+问题怎么送到用户      ctx.userQuestions.ask() → DSH 问答卡片   工具返回值里的 4 位数字
+模型看得见什么        只有「用户已允许 / 已拦截」             确认码本身
+模型能否自行放行      不能（答案不经过模型）                  能，所以这条通道不可信
+问不到用户（无 UI）   fail-closed 阻断                         仍可走文本流程
+子代理发起            DELEGATED_CALLER → 阻断                 可用
+```
+
+`askHuman()` 的实现约束（对着 DSH 源码核过）：
+
+- 服务按可选依赖取：`ctx.get('userQuestions')`（与 `ctx.get('workingDirectory')` 同一手法）。
+- `ask()` 要求传**真实存活的根代理**，否则抛 `CALLER_NOT_LIVE` / `DELEGATED_CALLER`；
+  shell 深度层没有 exec 里的 agent，要用 `ctx.get('agents').get(sessionId)` 换回来。
+- 不带 `wait.callId`：卡片作为一次性提示出现，settle 后自动移除，不进入会话投影。
+- 只有 `selected === ['允许执行']` 才算放行；拦截、自定义回答、超时、异常一律阻断。
+- 外层信号（`exec.signal`）与自带超时用 `AbortSignal.any` 合并，超时不算用户同意。
+
+### 4.4 兜底层
 
 - 同步 `ctx.tools.guard()`：只否决，没有令牌的破坏性调用直接拦（异步判定漏了也跑不掉）。
 - shell 深度层 `prepareShell()`：包装 `ctx.shell` 实例的 `execute`，原始方法挂在
@@ -333,12 +354,12 @@ policy.protectedPaths = dedupe(baseProtectedPaths ∪ uiProtectedPaths)
 
 ## 12. 测试策略
 
-51 个用例，全部离线（不依赖 DSH Host），按文件直接跑：
+55 个用例，全部离线（不依赖 DSH Host），按文件直接跑：
 
 | 文件 | 数量 | 关注点 |
 |---|---|---|
 | `test/core.test.mjs` | 37 | 分类器、路径、备份引擎、配额、manifest、还原、审计；0.2.3 新增变量表、管道回溯、`robocopy /MOVE`、字符串/注释屏蔽、`confirm` 判定 |
-| `test/gate.test.mjs` | 9 | 钩子接线、区域模型+确认码全流程、.NET 删除回归、**未解析目标 → 确认码（无备份 + `allowAll`）**、受保护目录优先于工作区短路、设置覆盖不得清空配置底线、`cwdFor` 回落、非法 cwd、fail-closed |
+| `test/gate.test.mjs` | 13 | 钩子接线、区域模型+确认全流程（弹窗与文本码两条通道）、.NET 删除回归、未解析目标 → 弹窗（无备份 + `allowAll`）、弹窗被拦截/问不到人、受保护目录优先于工作区短路、设置覆盖不得清空配置底线、`cwdFor` 回落、非法 cwd、fail-closed |
 | `test/protect.test.mjs` | 5 | `.gitignore` 风格保护模式（含 `!`、跨层、连坐） |
 
 本机沙箱下 `node --test test/` 会因 piped stdio 报 `spawn EPERM`，必须逐文件执行。

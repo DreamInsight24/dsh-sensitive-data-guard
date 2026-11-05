@@ -1,0 +1,32 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      # 注意：本机沙箱与部分 CI 环境里 `node --test` 会因 piped stdio 失败，
+      # 所以这里和 README 一样逐文件跑。
+      - name: core tests
+        run: node test/core.test.mjs
+
+      - name: gate tests
+        run: node test/gate.test.mjs
+
+      - name: protect tests
+        run: node test/protect.test.mjs

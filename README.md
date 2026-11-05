@@ -280,6 +280,8 @@ node bin/delete-guard.mjs gc [--root DIR]
   backup/                 # 备份根
   docs/                   # 测试报告、部署清单、设计修订
   locale/ icon.svg
+  LICENSE                  # MIT
+  .github/workflows/test.yml  # CI：逐文件跑三个测试
 ```
 
 测试（本机沙箱下 `node --test test/` 会因 piped stdio 报 `spawn EPERM`，请逐个文件跑）：
@@ -289,3 +291,13 @@ node test/core.test.mjs     # 22 个
 node test/gate.test.mjs     # 7 个
 node test/protect.test.mjs  # 5 个
 ```
+
+---
+
+## 12. 许可
+
+MIT License，Copyright (c) 2026 DreamInsight。详见 [LICENSE](LICENSE)。
+
+> 注意：本插件**不修改任何 DSH 代码、不依赖 `@deepseek-ai/*`**，但它拦截的是 DSH
+> 发起的所有破坏性操作。把它装到别人的机器上之前，请先读 `docs/DEPLOY-CHECKLIST.md`
+> 里的验证步骤，尤其是「备份根」和「受保护目录」这两项。

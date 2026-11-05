@@ -3,6 +3,7 @@
   "version": "0.2.1",
   "description": "Sensitive Data Guard: zone-aware, fail-closed backup-before-delete gate for DeepSeek Harness",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "main": "index.js",
   "exports": {

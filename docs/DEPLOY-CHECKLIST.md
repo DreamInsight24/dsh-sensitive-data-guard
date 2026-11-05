@@ -1,6 +1,6 @@
 # 敏感数据守卫 部署清单（一页）
 
-- 插件：`@local/dsh-sensitive-data-guard@0.2.2`
+- 插件：`@local/dsh-sensitive-data-guard@0.2.3`
 - 行 id：`dsh-sensitive-data-guard`
 - 插件目录：`<插件目录>`
 - 备份根：`backup/`（相对插件目录解析）
@@ -15,7 +15,7 @@
 
 - [ ] DSH Desktop 0.2.1-rc.2，profile 为 `desktop`
 - [ ] 插件目录完整：`package.json` 里
-      `name` 为 `@local/dsh-sensitive-data-guard`、`version` 为 `0.2.2`
+      `name` 为 `@local/dsh-sensitive-data-guard`、`version` 为 `0.2.3`
 - [ ] `package.json` 的 `dsh` 段同时含 `bundle.patch`（`./cordis.patch.yml`）与
       `client`（`platform: "web"`、`immediately: true`），`exports` 里有 `"./client"`
 - [ ] Sysmon 在运行：`Get-Service Sysmon64,SysmonDrv` 均为 Running（插件只读检测，不会改动它）
@@ -32,7 +32,7 @@
 - [ ] 让模型执行：`plugin_manager` → `install_bundle`，target = `<插件目录>`
       （或在插件页用「本地目录安装」指向同一路径）
 - [ ] 预期返回：`"stage":"enable"`、`"application":"applied"`、`"warnings":[]`，
-      并显示 `+ @local/dsh-sensitive-data-guard 0.2.2 <- <插件目录>`
+      并显示 `+ @local/dsh-sensitive-data-guard 0.2.3 <- <插件目录>`
 
 **确认成功**：返回里的 `application` 必须是 `applied`——它才是「已生效」的判据，
 不要用日志、进程列表或页面情况推断。

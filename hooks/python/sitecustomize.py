@@ -24,7 +24,7 @@ def _load():
     _loaded = True
     path = os.environ.get(_ENV_ALLOW)
     if not path:
-        _state = ("deny", [], [], "缺少允许清单（fail-closed）")
+        _state = ("deny", [], [], False, "缺少允许清单（fail-closed）")
         return _state
     try:
         with open(path, "r", encoding="utf-8") as handle:
@@ -39,9 +39,11 @@ def _load():
             for item in data.get("volatile", [])
             if isinstance(item, str)
         ]
-        _state = ("allow", roots, volatile, None)
+        # 用户对「目标解析不出」的命令输入过确认码：整条命令放行。
+        allow_all = data.get("allowAll") is True
+        _state = ("allow", roots, volatile, allow_all, None)
     except Exception as error:  # noqa: BLE001
-        _state = ("deny", [], [], str(error))
+        _state = ("deny", [], [], False, str(error))
     return _state
 
 
@@ -54,13 +56,16 @@ def _inside(parent, child):
 
 
 def _check(target, operation):
-    mode, roots, volatile, reason = _load()
+    mode, roots, volatile, allow_all, reason = _load()
     try:
         resolved = os.path.normcase(os.path.abspath(os.fspath(target)))
     except Exception as error:  # noqa: BLE001
         raise PermissionError("delete-guard: 无法解析删除目标（%s）" % (error,)) from error
     if mode == "deny":
         raise PermissionError("delete-guard: 拒绝删除 %s（%s）" % (resolved, reason))
+    if allow_all:
+        # 用户已对这条「目标无法解析」的命令确认放行。
+        return
     for root in roots:
         if _inside(root, resolved):
             return

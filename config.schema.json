@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://local/dsh-sensitive-data-guard/config.schema.json",
   "title": "敏感数据守卫（Sensitive Data Guard）配置",
-  "description": "敏感数据守卫 0.2.2 的配置结构。实际生效值按三级优先顺序合成：DEFAULTS（lib/defaults.js） < bundle 的 cordis.patch.yml（或用户 profile patch 里按行 id 覆盖的 config） < 插件目录下 data/settings.json（DSH 设置页写入）。深合并规则：对象逐层合并，数组与标量整体覆盖。唯一例外是 policy.protectedPaths：它不做覆盖，而是「配置底线 ∪ 设置页追加」，配置里声明的条目设置页删不掉。",
+  "description": "敏感数据守卫 0.2.3 的配置结构。实际生效值按三级优先顺序合成：DEFAULTS（lib/defaults.js） < bundle 的 cordis.patch.yml（或用户 profile patch 里按行 id 覆盖的 config） < 插件目录下 data/settings.json（DSH 设置页写入）。深合并规则：对象逐层合并，数组与标量整体覆盖。唯一例外是 policy.protectedPaths：它不做覆盖，而是「配置底线 ∪ 设置页追加」，配置里声明的条目设置页删不掉。",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -199,6 +199,12 @@
           "enum": ["scope", "block"],
           "default": "scope",
           "description": "解析不出目标路径的 shell 命令：scope 把整个工作目录作为范围处理（默认）或 block 直接阻断。"
+        },
+        "unresolvedAction": {
+          "type": "string",
+          "enum": ["confirm", "deny", "scope"],
+          "default": "confirm",
+          "description": "破坏性命令的目标解析不出（变量/运行时表达式）时：confirm 走确认码流程放行（默认；报告里明确写「未备份」）、deny 直接阻断、scope 回落到工作目录 scope（0.2.2 及以前的放行行为）。注意 confirm 与 scope 都没有备份。"
         },
         "scopeRoots": {
           "type": "array",

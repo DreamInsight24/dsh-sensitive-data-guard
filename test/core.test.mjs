@@ -140,10 +140,12 @@ test('classifier: PowerShell .NET 短类型名 + 目录递归删除 → targets'
   assert.deepEqual(p.targets, ['D:\\Zip\\test']);
 });
 
-test('classifier: PowerShell .NET 删除目标为变量 → deny（回归：实测绕过用例）', () => {
+test('classifier: .NET 删除走管道 + 变量 → 借助变量表/管道回溯拿到 targets', () => {
   // 2026-11-05 的真实测试里，这条命令绕过了守卫：
   //   Get-ChildItem ... | ForEach-Object { [System.IO.File]::Delete($_.FullName) }
-  // 旧版分类器不认识 .NET 调用，整条命令按 opaque → scope=工作区 → 放行。
+  // 旧版分类器不认识 .NET 调用 → opaque → scope=工作区 → 放行。
+  // 0.2.3 起：变量表还原 $target，管道回溯补上 $_.FullName → 能拿到真实目标，
+  // 于是可以「先备份再要确认码」，而不是一概拒掉。
   const command = [
     `$target = 'D:\\Zip\\test'`,
     'try {',
@@ -156,8 +158,77 @@ test('classifier: PowerShell .NET 删除目标为变量 → deny（回归：实�
     '} catch { Write-Output ("ERROR: " + $_.Exception.Message) }',
   ].join('\n');
   const p = parseShellCommand(command, 'D:\\work', DEFAULTS.policy);
-  assert.equal(p.kind, 'deny');
-  assert.match(p.reason, /fail-closed/);
+  assert.equal(p.kind, 'targets');
+  assert.deepEqual(p.targets, ['D:\\Zip\\test'], '应还原出被删除的目录');
+});
+
+test('classifier: 变量表 —— $target 赋过字面量就能解析', () => {
+  const p = parseShellCommand(
+    "$target = 'D:\\Zip\\test'\nRemove-Item -LiteralPath $target -Recurse -Force",
+    'D:\\work',
+    DEFAULTS.policy,
+  );
+  assert.equal(p.kind, 'targets');
+  assert.deepEqual(p.targets, ['D:\\Zip\\test']);
+});
+
+test('classifier: 管道回溯 —— Get-ChildItem X | Remove-Item 拿到 X', () => {
+  const p = parseShellCommand('Get-ChildItem -LiteralPath D:\\Zip\\test -File | Remove-Item -Force', 'D:\\work', DEFAULTS.policy);
+  assert.equal(p.kind, 'targets');
+  assert.deepEqual(p.targets, ['D:\\Zip\\test']);
+});
+
+test('classifier: 没有上游的非管道删除仍然回落 scope', () => {
+  const p = parseShellCommand('Get-ChildItem | Remove-Item -Recurse', 'D:\\work', DEFAULTS.policy);
+  assert.equal(p.kind, 'scope');
+});
+
+test('classifier: robocopy /MOVE 把源目录也纳入 targets', () => {
+  const src = path.join(TMP, 'rc-src');
+  const dst = path.join(TMP, 'rc-dst-not-exist');
+  fs.mkdirSync(src, { recursive: true });
+  fs.writeFileSync(path.join(src, 'a.txt'), 'a');
+  const p = parseShellCommand(`robocopy "${src}" "${dst}" /MOVE`, 'D:\\work', DEFAULTS.policy);
+  assert.equal(p.kind, 'targets', '旧版会把 /MOVE 当 mirror，目标不存在就 planSafe 放行');
+  assert.ok(p.targets.includes(src), '/MOVE 会删源，源必须纳入');
+});
+
+test('classifier: 脚本里的字符串/注释不算删除（消除误报）', () => {
+  const file = path.join(TMP, 'probe-quiet.mjs');
+  fs.writeFileSync(file, [
+    "// 注释里的示例：shutil.rmtree('D:/data/x')",
+    'const sample = "os.remove(\'D:/data/y\')";',
+    'console.log(sample);',
+  ].join('\n'));
+  const p = parseShellCommand(`node "${file}"`, 'D:\\work', DEFAULTS.policy);
+  assert.equal(p.kind, 'safe', p.notes.join(','));
+  assert.deepEqual(p.notes, ['interpreter:clean']);
+});
+
+test('classifier: 脚本里真正的删除调用仍然认得出', () => {
+  const file = path.join(TMP, 'probe-loud.mjs');
+  const victim = path.join(TMP, 'probe-victim.txt');
+  fs.writeFileSync(victim, 'v');
+  fs.writeFileSync(file, `import fs from 'node:fs';\nfs.rmSync('${victim.replace(/\\/g, '/')}');\n`);
+  const p = parseShellCommand(`node "${file}"`, 'D:\\work', DEFAULTS.policy);
+  assert.equal(p.kind, 'targets');
+  assert.deepEqual(p.targets, [victim]);
+});
+
+test('classifier: 目标解析不出 → confirm（默认不硬拒）', () => {
+  const cmd = 'Remove-Item -LiteralPath $env:USERPROFILE\\secret.txt -Force';
+  const p = parseShellCommand(cmd, 'D:\\work', DEFAULTS.policy);
+  assert.equal(p.kind, 'confirm');
+  assert.match(p.reason, /无法确定/);
+  // 严格模式：同一个 unresolvedAction 一改就退回硬拒。
+  const strict = parseShellCommand(cmd, 'D:\\work', { ...DEFAULTS.policy, unresolvedAction: 'deny' });
+  assert.equal(strict.kind, 'deny');
+  assert.match(strict.reason, /fail-closed/);
+});
+
+test('classifier: 临时目录的未解析目标不追问', () => {
+  const p = parseShellCommand('Set-Content -Path "$env:TEMP\\x.txt" -Value hi', 'D:\\work', DEFAULTS.policy);
+  assert.notEqual(p.kind, 'confirm');
 });
 
 test('classifier: PowerShell .NET Move/Copy → targets', () => {

@@ -6,7 +6,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-let state = { mode: 'deny', roots: [], volatile: [], reason: '缺少允许清单（fail-closed）' };
+let state = { mode: 'deny', roots: [], volatile: [], allowAll: false, reason: '缺少允许清单（fail-closed）' };
 try {
   const allowFile = process.env.DSH_DELETE_GUARD_ALLOW;
   if (allowFile) {
@@ -22,6 +22,8 @@ try {
       mode: 'allow',
       roots: (Array.isArray(data.roots) ? data.roots : []).map(norm).filter(Boolean),
       volatile: (Array.isArray(data.volatile) ? data.volatile : []).map(norm).filter(Boolean),
+      // 用户对「目标解析不出」的命令输入过确认码：整条命令放行。
+      allowAll: data.allowAll === true,
       reason: null,
     };
   }
@@ -38,6 +40,7 @@ function check(target, operation) {
   if (state.mode === 'deny') {
     throw new Error(`delete-guard: 拒绝删除 ${String(target)}（${state.reason}）`);
   }
+  if (state.allowAll === true) return; // 用户已对这条「目标无法解析」的命令确认放行
   let resolved;
   try {
     resolved = path.resolve(String(target)).toLowerCase();

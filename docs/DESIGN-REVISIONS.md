@@ -364,3 +364,79 @@ Get-ChildItem -LiteralPath $target -File -Force | ForEach-Object {
 - 解释器写入的**动态路径**（`fs.writeFileSync(path.join(...))`）→ 仍退化成 `scope`；
 - 任意外部程序（`D:\tools\cleanup.exe D:\Zip\test`）→ 仍退化成 `scope`；
   需要更严可把 `policy.opaqueCommand` 设为 `block`。
+
+---
+
+## 13. v0.2.3：解析优先，解析不出转确认码（2026-11-06）
+
+### 13.1 缺陷（v0.2.2 的两面）
+
+12.3 的第 2 条（取不出路径 → `deny`）堵住了绕过，但它带来两个新问题：
+
+**(a) 可用性**：全量硬拒会把正常操作卡死，而且用户拿到的是一句没有上下文的 fail-closed，
+既不知道模型要删什么，也没有申诉通道。用户的意见是：**不要完全拦截，最好解析出来告诉用户；
+实在解析不出，就让 Agent 用自然语言说明并走确认码**。
+
+**(b) 解析本身漏了四种常见形态**（外部审阅提出，逐条复核成立）：
+
+| 形态 | 当时的实际判定 |
+|---|---|
+| `Remove-Item -LiteralPath $target`（`$target` 在前面赋过字面量） | `scope`：`resolveMaybe` 见 `$` 即返回 null |
+| `Get-ChildItem X \| Remove-Item -Force` | `scope`：语句按 `\|` 切开，下游拿不到 X |
+| `robocopy X Y /MOVE`（Y 不存在） | `safe`：`/MOVE` 被并进 mirror 正则，目标不存在就 `planSafe` |
+| `node <脚本>`（脚本里有注释/字符串写着删除） | `targets` + 真备份 + 确认码：纯正则全文扫描 |
+
+第四种是**误报**：一段只做静态分析的脚本，因为注释里出现了 `shutil.rmtree('D:\Zip\test')`
+就被当成真的删除，触发了备份与 4 位确认码。
+
+### 13.2 设计取向的转变
+
+> 「拦得住」不再是唯一目标，**「拦得准 + 拦下来之后说得清」**才是。
+> 硬拒只在「用户无法参与」时才用；能让人看一眼就判断的，一律走确认码。
+
+判定链改成三段：
+
+```
+能还原目标      → targets → 备份 → 区域流程（可能只要确认码）
+还原不出目标    → confirm → 无备份 → 确认码（报告里明确写「没有备份」）
+确认码也不给    → 命令不执行
+```
+
+`policy.unresolvedAction` 保留三种取值（`confirm` 默认 / `deny` / `scope`），
+把「更严」变成一行配置，而不是改代码。
+
+### 13.3 修复
+
+1. **变量表**：`collectVars()` 收集 `$x = '字面量'`；`resolveMaybe(raw, workdir, vars)`
+   在整串就是一个 `$name` 时查表替换。含插值（`$env:TEMP\x`、`$($x.y)`）仍然不解析。
+2. **管道回溯**：`splitStatementsRaw()` 给每条语句带一个 `piped` 标记——
+   「由 `|` 接出」或「仍处在一个未闭合的 `{ }` 块里」。上游
+   `Get-ChildItem / gci / dir / ls / get-item / gi / resolve-path / select-string`
+   的路径记为 `lastSource`，下游删除无路径参数时借用；`$_.FullName` 同样映射到 `lastSource`。
+   `-File` 这类「既是参数名又是开关」的词，后面紧跟另一个 `-开关` 时不取值
+   （否则 `Get-ChildItem -File -Force` 会解析出 `\‑Force`）。
+3. **`robocopy /MOVE`**：`/MOVE`、`/MOV` 会把源删掉，源与已存在的目标一起纳入 `targets`。
+4. **字符串/注释屏蔽**：`codeFlags(source)` 标记引号（含三引号）与 `//`、`/* */`、`#` 注释区间，
+   `scanCode`/`scanCodeWrites` 只接受落在代码位置上的匹配。若代码里出现
+   `eval`/`exec`/`subprocess`/`child_process`/`Invoke-Expression`，退回全文扫描
+   （字符串可能在运行时被当代码执行，此时宁可误报）。
+5. **未解析目标 → 确认码**：分类器返回 `kind:'confirm'`；门禁的 `guardUnresolved()`
+   与 `guardSensitive()` 同构（同指纹、同 TTL、一次性），差别是 **不备份**，
+   且放行令牌带 `roots: []` + `allowAll: true`——否则确认过的命令派生出的 python/node
+   子进程会被 L2 钩子全拒，「确认了也执行不了」。
+6. 报告新增未解析形态：「❗ 本次没有备份」置于正文最前，原样附上命令文本，
+   并说明守卫也无法校验受保护目录。
+
+### 13.4 验收
+
+- 版本 **0.2.3**（`package.json` / `config.schema.json` 已改）；
+- 自动化测试 **51 通过 / 0 失败**（`core` 37 / `gate` 9 / `protect` 5）；
+- 12.1 的原命令形态现在解析为 `targets = ['D:\Zip\test']` → 先备份、再要确认码；
+- 未解析形态有独立端到端用例：报告含「没有备份」、错码被拒、正码放行且 `allowAll` 写进允许清单。
+
+### 13.5 仍未覆盖
+
+- 解释器内的动态路径仍是 `scope`：这类由 L2 运行时钩子兜底；
+  只有 PowerShell 原生的 .NET 删除没有钩子可挡，所以只有它走确认码；
+- `allowAll` 是「用户对这条命令负全责」的口子，一旦确认，该命令派生的一切删除都不再校验——
+  这是 confirm 的固有代价，`deny` 模式下不存在。

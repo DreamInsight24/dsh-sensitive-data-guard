@@ -337,3 +337,59 @@ Get-ChildItem -LiteralPath $target -File -Force | ForEach-Object {
 - 解释器写入的**动态路径**（`fs.writeFileSync(path.join(...))`）仍退化成 `scope`；
 - 任意外部程序（`D:\tools\cleanup.exe D:\Zip\test`）仍退化成 `scope` → 工作区放行；
   需要更严可以把 `policy.opaqueCommand` 改成 `block`（代价是 `npm run build` 这类命令也会被拦）。
+
+---
+
+## 八、v0.2.3 修订：解析优先 + 解析不出转确认码（2026-11-06）
+
+### 8.1 触发原因
+
+0.2.2 把「.NET 删除但目标是变量」一律 `deny`，堵住了绕过，但代价是**正常操作被卡死**：
+用户看到的是一个没有上下文的 fail-closed，既不知道模型想删什么，也没有申诉通道。
+同时第二轮外部审阅指出四个具体缺陷，逐条复核后**全部成立**：
+
+| 审阅意见 | 复核结果 |
+|---|---|
+| `Remove-Item -LiteralPath $target` 落到 `scope=workspace` | 成立：`resolveMaybe` 见 `$` 直接返回 null，路径丢失 |
+| `Get-ChildItem X \| Remove-Item -Force` 丢掉管道源 | 成立：语句按 `\|` 切开，下游拿不到 X |
+| `robocopy X Y /MOVE` 被判 `safe` | 成立：`/MOVE` 被当成 mirror 的别名，目标不存在就 `planSafe` |
+| `node <脚本>` 扫全文 → 字符串里的删除字样误报 | 成立：`scanCode` 是纯正则全文扫描 |
+
+### 8.2 改动
+
+| 位置 | 改动 |
+|---|---|
+| `lib/classify.js` | **变量表**：`$x = '字面量'` 记入 `collectVars()`，`resolveMaybe` 能还原 `$x` |
+| `lib/classify.js` | **管道回溯**：`splitStatementsRaw()` 记录每条语句是否仍在同一段构造里（管道接出，或处在未闭合的 `{ }` 内）；上游 `Get-ChildItem/dir/ls/get-item/resolve-path` 的路径借给下游无参删除，`$_.FullName` 同理 |
+| `lib/classify.js` | **`robocopy /MOVE`**：源目录纳入 `targets`（`/MOVE`、`/MOV` 会删源） |
+| `lib/classify.js` | **字符串/注释屏蔽**：`codeFlags()` 标记引号与注释区间，`scanCode`/`scanCodeWrites` 只认代码位置上的调用；出现 `eval`/`exec`/`child_process` 时退回全文扫描 |
+| `lib/classify.js` | **`-File` 参数名冲突**：`Get-ChildItem -File -Force` 曾把 `-Force` 当路径（解析出 `\‑Force`）；现在开关后跟开关时不再取值 |
+| `lib/classify.js` | 新增 `planConfirm` + `planUnresolved`：目标解析不出时按 `policy.unresolvedAction` 返回 `confirm`（默认）/ `deny` / `scope` |
+| `lib/gate.js` | 新增 `guardUnresolved()`：与 `guardSensitive` 同构的确认码流程，但**不备份**，放行令牌带 `roots: []` + `allowAll: true` |
+| `lib/confirm.js` | 新增未解析报告：把「❗ 本次没有备份」放在正文最前，并原样附上命令文本 |
+| hooks | Node/Python 钩子识别允许清单里的 `allowAll`（只由 `guardUnresolved` 写出） |
+| `lib/defaults.js` / `config.schema.json` | `policy.unresolvedAction`：`confirm`（默认）/ `deny` / `scope` |
+
+### 8.3 新增用例与结果
+
+| 文件 | 用例数 | 通过 | 失败 |
+|---|---:|---:|---:|
+| `test/core.test.mjs` | 37 | 37 | 0 |
+| `test/gate.test.mjs` | 9 | 9 | 0 |
+| `test/protect.test.mjs` | 5 | 5 | 0 |
+| **合计** | **51** | **51** | **0** |
+
+新增（相对 0.2.2）：
+
+- `core`：变量表 / 管道回溯 / 无上游仍回落 `scope` / `robocopy /MOVE` /
+  字符串与注释不触发 / 真删除仍认得出 / 解析不出 → `confirm`（含 `deny` 严格模式）/
+  临时目录不追问；7.1 的原命令形态现在断言 `targets=['D:\Zip\test']`（能备份了）；
+- `gate`：7.1 的命令形态改为「备份 + 确认码 → 带码放行复用批次」；
+  新增「未解析 → 确认码（无备份）」全流程：报告含「没有备份」、错码被拒、正码放行且
+  令牌 `allowAll=true`、shell 深度层写出的允许清单也带 `allowAll`。
+
+### 8.4 仍未覆盖
+
+- 解释器内部**动态路径**（`fs.rmSync(p)`）仍是 `scope`；这类靠 L2 钩子在运行时兜底，
+  只有 PowerShell 原生的 .NET 删除没有钩子可兜，所以只有它走到了确认码流程；
+- 字符串屏蔽是启发式的，`eval`/`child_process` 存在时退回全文扫描（宁可误报）。

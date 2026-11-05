@@ -116,10 +116,24 @@ guardSensitive(...) → allow | deny(报告)
 | 工作区 | allow | allow | allow | allow |
 | `.dsh` | allow + 静默备份 | 同左 | 同左 | 同左 |
 | 敏感区 | allow + 备份 | allow + 备份 | **deny + 确认码** | **deny + 确认码** |
+| 目标解析不出 | **deny + 确认码（无备份）** | 同左 | 同左 | 同左 |
 | 保护目录 | deny | deny | deny | deny |
 
 `needsConfirm(zone, stats)` 只在 `zone === sensitive` 时可能为真；
 `medium` 的阈值是「文件数 ≥ `mediumMinFiles` **或** 体积 ≥ `mediumMinBytes`」。
+
+「目标解析不出」（`plan.kind === 'confirm'`）走 `guardUnresolved()`，与 `guardSensitive()` 的差别：
+
+| | `guardSensitive` | `guardUnresolved` |
+|---|---|---|
+| 备份 | 先备份（可 `restore`） | **不备份**（目标运行时才确定） |
+| 触发条件 | 区域 + 级别 | 分类器拿不到字面量目标 |
+| 报告 | 「已提前备份 + 批次号」 | 「❗ 本次没有备份」置于正文最前 |
+| 放行令牌 | `roots = 备份根集` | `roots = []` + **`allowAll: true`** |
+
+`allowAll` 只在这条路径上出现，作用是让确认过的命令派生出的 python/node 子进程不被
+L2 钩子全拒（否则「确认了也执行不了」）。它等价于「用户对这条命令的删除范围负全责」。
+策略开关 `policy.unresolvedAction`：`confirm`（默认）/ `deny` / `scope`。
 
 ### 4.3 兜底层
 
@@ -319,12 +333,12 @@ policy.protectedPaths = dedupe(baseProtectedPaths ∪ uiProtectedPaths)
 
 ## 12. 测试策略
 
-42 个用例，全部离线（不依赖 DSH Host），按文件直接跑：
+51 个用例，全部离线（不依赖 DSH Host），按文件直接跑：
 
 | 文件 | 数量 | 关注点 |
 |---|---|---|
-| `test/core.test.mjs` | 29 | 分类器、路径、备份引擎、配额、manifest、还原、审计 |
-| `test/gate.test.mjs` | 8 | 钩子接线、区域模型+确认码全流程、.NET 删除回归、受保护目录优先于工作区短路、设置覆盖不得清空配置底线、`cwdFor` 回落、非法 cwd、fail-closed |
+| `test/core.test.mjs` | 37 | 分类器、路径、备份引擎、配额、manifest、还原、审计；0.2.3 新增变量表、管道回溯、`robocopy /MOVE`、字符串/注释屏蔽、`confirm` 判定 |
+| `test/gate.test.mjs` | 9 | 钩子接线、区域模型+确认码全流程、.NET 删除回归、**未解析目标 → 确认码（无备份 + `allowAll`）**、受保护目录优先于工作区短路、设置覆盖不得清空配置底线、`cwdFor` 回落、非法 cwd、fail-closed |
 | `test/protect.test.mjs` | 5 | `.gitignore` 风格保护模式（含 `!`、跨层、连坐） |
 
 本机沙箱下 `node --test test/` 会因 piped stdio 报 `spawn EPERM`，必须逐文件执行。
@@ -342,6 +356,10 @@ policy.protectedPaths = dedupe(baseProtectedPaths ∪ uiProtectedPaths)
 3. 插件没加载时没有门禁；DSH 没有「插件死了也 fail-closed」的机制。
 4. 与本机 DSH 无关的第三方进程删文件，拦不到（Sysmon 只做取证，且只读检测）。
 5. 工作区无论如何不设防——这是设计，不是遗漏。
+6. `unresolvedAction: confirm` 把最后一道闸门交给人工：解析不出目标时没有备份，
+   安全边界落在「用户是否看清了那条命令」。要更严就改成 `deny`。
+7. 字符串/注释屏蔽是启发式的：脚本里出现 `eval`/`exec`/`child_process` 时会退回全文扫描
+   （宁可误报），因此这类脚本仍可能因为字符串里的删除字样被要求确认码。
 
 ---
 

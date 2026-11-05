@@ -170,7 +170,7 @@ test('区域模型：工作区不备份、敏感区备份并要求确认码', as
   core.dispose();
 });
 
-test('回归：PowerShell .NET 删除（变量路径）在敏感区被 fail-closed 阻断', async () => {
+test('回归：PowerShell .NET 删除（变量路径）现在能定位目标 → 备份 + 确认码', async () => {
   const root = path.join(TMP, 'root-dotnet');
   const work = path.join(TMP, 'dotnet-work');
   const target = path.join(TMP, 'dotnet-target');
@@ -186,6 +186,7 @@ test('回归：PowerShell .NET 删除（变量路径）在敏感区被 fail-clos
   assert.equal(core.ready, true, core.initError ?? '');
 
   // 2026-11-05 实测里被放行的那条命令形态：删的是变量路径。
+  // 0.2.3 起变量表 + 管道回溯能还原出 $target，于是走正常的「备份 + 确认码」。
   const command = [
     `$target = '${target}'`,
     'Get-ChildItem -LiteralPath $target -File -Force | ForEach-Object {',
@@ -195,9 +196,16 @@ test('回归：PowerShell .NET 删除（变量路径）在敏感区被 fail-clos
   ].join('\n');
   const exec = execFor(command, work, 'call-dotnet');
   const decision = await core.onPreExecute(exec, async () => ({ kind: 'allow' }));
-  assert.equal(decision.kind, 'deny', '变量路径的 .NET 删除必须被阻断');
-  assert.match(String(decision.reason), /fail-closed/);
-  assert.ok(fs.existsSync(path.join(target, 'a.txt')), '被阻断时不应删除任何文件');
+  assert.equal(decision.kind, 'deny', '敏感区删除仍然要拦下来要确认码');
+  assert.match(String(decision.reason), /确认码：\d{4}/);
+  assert.match(String(decision.reason), /已经提前备份/, '能定位目标就应该先备份');
+  assert.ok(fs.existsSync(path.join(target, 'a.txt')), '被拦截时不应删除任何文件');
+
+  const variableCode = /确认码：(\d{4})/.exec(String(decision.reason))[1];
+  const variableRetry = execFor(`$env:DSH_GUARD_CONFIRM='${variableCode}'; ${command}`, work, 'call-dotnet-1b');
+  const variableDecision = await core.onPreExecute(variableRetry, async () => ({ kind: 'allow' }));
+  assert.equal(variableDecision.kind, 'allow');
+  assert.ok(core.tokens.get('call-dotnet-1b').batchId, '带码放行应复用备份批次');
 
   // 字面量路径的 .NET 删除：敏感区 → 备份 + 确认码。
   const literalPath = path.join(target, 'a.txt');
@@ -212,6 +220,64 @@ test('回归：PowerShell .NET 删除（变量路径）在敏感区被 fail-clos
   const retryDecision = await core.onPreExecute(retry, async () => ({ kind: 'allow' }));
   assert.equal(retryDecision.kind, 'allow');
   assert.ok(core.tokens.get('call-dotnet-3').batchId, '带码放行应复用备份批次');
+
+  core.dispose();
+});
+
+test('目标解析不出：走确认码放行（无备份），报告必须写明', async () => {
+  const root = path.join(TMP, 'root-unresolved');
+  const work = path.join(TMP, 'unresolved-work');
+  fs.mkdirSync(work, { recursive: true });
+
+  const core = new GateCore(fakeCtx(), {
+    backup: { root, maxBatchFiles: 1000, maxBatchBytes: 1e12, quotaBytes: 1e12 },
+    policy: { triggerLevel: 'hard' },
+  });
+  await core.start();
+  assert.equal(core.ready, true, core.initError ?? '');
+
+  const command = 'Remove-Item -LiteralPath $env:DSH_SOMETHING_UNDEFINED -Recurse -Force';
+  const first = await core.onPreExecute(execFor(command, work, 'call-unresolved-1'), async () => ({ kind: 'allow' }));
+  assert.equal(first.kind, 'deny', '第一次必须拦下来要确认码');
+  assert.match(String(first.reason), /目标无法静态确定/);
+  assert.match(String(first.reason), /没有备份/, '报告必须明确告知没有备份');
+  assert.match(String(first.reason), /确认码：\d{4}/);
+
+  // 错误确认码：拒绝。
+  const wrong = await core.onPreExecute(
+    execFor(`$env:DSH_GUARD_CONFIRM='9999'; ${command}`, work, 'call-unresolved-2'),
+    async () => ({ kind: 'allow' }),
+  );
+  assert.equal(wrong.kind, 'deny');
+  assert.match(String(wrong.reason), /确认码不正确/);
+
+  // 正确确认码：放行，且签发的令牌允许整条命令（含派生的 python/node 子进程）。
+  const code = /确认码：(\d{4})/.exec(String(first.reason))[1];
+  const retry = execFor(`$env:DSH_GUARD_CONFIRM='${code}'; ${command}`, work, 'call-unresolved-3');
+  const decision = await core.onPreExecute(retry, async () => ({ kind: 'allow' }));
+  assert.equal(decision.kind, 'allow');
+  const token = core.tokens.get('call-unresolved-3');
+  assert.equal(token.allowAll, true, '确认过的未解析命令需要 allowAll，否则子进程钩子会全部拒掉');
+  assert.equal(token.batchId, null, '这种情况本来就没有备份');
+
+  // shell 深度层：同一个 seam 里先拦一次拿到“shell 指纹”的码，带码重发应放行，
+  // 且允许清单里必须写出 allowAll（否则派生的子进程会被钩子全部拒掉）。
+  const baseSpec = {
+    workdir: work,
+    sandboxPolicy: { mode: 'danger-full-access', workspaceRoot: work, sessionId: 'session-test' },
+    env: {},
+  };
+  let seamCode = null;
+  try {
+    await core.prepareShell({ ...baseSpec, command });
+  } catch (error) {
+    seamCode = /确认码：(\d{4})/.exec(String(error.message))?.[1] ?? null;
+  }
+  assert.ok(seamCode, 'shell 深度层也应该给出确认码');
+  const prepared = await core.prepareShell({ ...baseSpec, command: `$env:DSH_GUARD_CONFIRM='${seamCode}'; ${command}` });
+  const allow = JSON.parse(fs.readFileSync(prepared.env.DSH_DELETE_GUARD_ALLOW, 'utf8'));
+  assert.equal(allow.allowAll, true);
+  assert.deepEqual(allow.roots, []);
 
   core.dispose();
 });

@@ -6,7 +6,7 @@
 > 工作区内部完全不干预。备份不成功就硬性阻断，绝不降级为警告。
 
 - 插件包：`@local/dsh-sensitive-data-guard`（Host 插件 + Client 半 + bundle patch）
-- 版本：0.2.2；适配 DSH 0.2.1-rc.2（desktop profile）
+- 版本：0.2.3；适配 DSH 0.2.1-rc.2（desktop profile）
 - 插件目录：`<插件目录>`（目录名是历史遗留，包名才是准的）
 - 默认备份根：`backup/`（相对插件目录解析）
 - 默认级别：`hard`
@@ -85,6 +85,43 @@
    门禁校验通过后**直接放行并复用刚才那个备份批次**，不会重新备份一遍。
 4. 码错了 → 直接拒绝，**不会**重新备份（避免用错误码反复刷备份）。
 5. 码过期了 → 重新备份、重新生成新码。
+
+### 3.1 目标解析不出时（0.2.3 起）
+
+有时目标根本算不出来，例如 `Remove-Item -LiteralPath $env:SOME_VAR -Recurse`。
+0.2.2 及以前这种情况**一律硬拒**（fail-closed）——安全，但用户会莫名其妙地卡住，
+也不知道模型到底想删什么。0.2.3 改成同一套确认流程：
+
+```
+⚠️ 破坏性命令的目标无法静态确定（未执行）
+
+原因：无法确定 remove-item 的删除目标（$env:SOME_VAR）
+
+命令原文：
+```
+Remove-Item -LiteralPath $env:SOME_VAR -Recurse -Force
+```
+
+❗ 本次没有备份：目标要到运行时才确定，守卫无法在放行前保存副本。
+   确认之后执行删除，被删掉的内容无法用 delete-guard restore 还原。
+   守卫同样无法校验目标是否落在受保护目录（插件自身、备份根）里。
+
+确认码：3376
+```
+
+差别只有两点，但都要说清楚：
+
+- **没有备份**。目标是运行时才确定的，守卫在放行前没有东西可备份——所以报告把这一行放在最前面，
+  而不是混在正常报告里。确认之后删掉的东西**找不回来**。
+- 确认后的放行是**整条命令**放行（允许清单里写 `allowAll`），否则命令派生出来的
+  python/node 子进程会被运行时钩子全部拒掉，确认了也执行不了。
+
+想让这种情况**继续硬拒**，把 `policy.unresolvedAction` 改成 `deny` 即可（三档：`confirm` 默认 /
+`deny` / `scope` 旧行为）。改在 `cordis.patch.yml` 或 `data/settings.json` 里。
+
+> 大多数「解析不出」其实能在 0.2.3 里被解析出来：`$x = '字面量'` 会被记进变量表，
+> `Get-ChildItem X | Remove-Item` 会回溯到 X，`[IO.File]::Delete($_.FullName)` 会补上上游路径。
+> 只有真的到运行时才确定的目标（环境变量、字符串拼接、函数返回）才会走到这一节。
 
 ---
 
@@ -197,11 +234,22 @@ C:\Windows\System32
 
 L0/L1 的命令文本解析覆盖这些破坏性形态：`Remove-Item` / `rm` / `rd` / `del` / `erase`、
 `Move-Item` / `Copy-Item`（覆盖）、`Clear-Content` / `Set-Content` / `Out-File`、
-`robocopy /MOVE`、`git clean` / `reset --hard` / `rm`、`cmd /c del`、
+`robocopy /MOVE`（源也删，源与目标都纳入）、`git clean` / `reset --hard` / `rm`、`cmd /c del`、
 **PowerShell .NET 文件 API**（`[IO.File]::Delete`、`[IO.Directory]::Delete`、`::Move`、`::Copy`，
 含 `[System.IO.*]` 全写与 `[IO.*]` 简写）、以及解释器里的 `shutil.rmtree`、`os.remove`、
 `fs.rmSync`、`fs.writeFileSync`、`python open(...,'w')` 等。
-**解析不出目标路径的 .NET 删除/移动/复制一律 fail-closed 阻断**，不会回落成工作区放行。
+
+解析时会尽可能把目标还原出来（0.2.3）：
+
+- **变量表**：命令里 `$x = '字面量'` 会被记住，`Remove-Item -LiteralPath $x` 能还原成真实路径；
+- **管道回溯**：`Get-ChildItem X | Remove-Item` 的下游拿不到 X，会把上游列出的路径借过来；
+- **字符串/注释屏蔽**：`node <脚本>` 扫描脚本源码时先标记引号与注释区间，
+  写在注释/字符串里的 `shutil.rmtree(...)` 不再触发备份与确认码（这就是 0.2.2 的误报来源）；
+  一旦脚本里出现 `eval`/`exec`/`child_process`，退回全文扫描（防 `eval("rm ...")`）。
+
+真的还原不出时（环境变量、字符串拼接、函数返回）按 `policy.unresolvedAction` 处理：
+默认 **`confirm`**——不硬拒，改成和敏感区一样的确认码流程（见 3.1），
+报告里明确写「未备份」；改成 `deny` 则退回硬拒。
 
 ---
 
@@ -235,11 +283,14 @@ node "bin\delete-guard.mjs" status
 4. **动态/混淆代码**：清空环境、`python -E/-I`、native 二进制直接 unlink —— 钩子失效，只剩解析层。
 5. **插件自身未加载/崩溃**：没有门禁。DSH 没有「插件死了也 fail-closed」的机制，请用 `status` 健康位自检。
 6. **解释器写入的动态路径**：字面量路径的 `node -e "fs.writeFileSync('D:\a.txt',…)"`、
-   `python -c "open('D:/a.txt','w')"` 已纳入备份与保护目录检查；但目标由变量/表达式拼出时
-   只能退化成 `scope`（工作区放行）。自保护防的是**删除/卸载**与字面量改写，
+   `python -c "open('D:/a.txt','w')"` 已纳入备份与保护目录检查；目标由变量/表达式拼出时
+   只退化为 `scope`（工作区放行）——但派生的 python/node 子进程仍受 L2 钩子约束，
+   删到工作区之外会被钩子拒掉。自保护防的是**删除/卸载**与字面量改写，
    不是防同权限进程用任意代码改写文件；要严格边界请在操作系统层限制目录写权限。
-7. **超限默认阻断**：单文件 > 256 MiB、单批 > 10 GiB、批文件数 > 5 万、总量 > 50 GiB。
-8. **工作区不设防是设计决定**：工作区里的任何删除都不备份、不提醒、拦不住。
+7. **`unresolvedAction: confirm` 是「人工兜底」而不是「自动保护」**：目标解析不出时
+   没有备份，安全边界落在「你有没有看清那条命令」上。要更严就设成 `deny`。
+8. **超限默认阻断**：单文件 > 256 MiB、单批 > 10 GiB、批文件数 > 5 万、总量 > 50 GiB。
+9. **工作区不设防是设计决定**：工作区里的任何删除都不备份、不提醒、拦不住。
 
 ---
 
@@ -296,8 +347,8 @@ node bin/delete-guard.mjs gc [--root DIR]
 测试（本机沙箱下 `node --test test/` 会因 piped stdio 报 `spawn EPERM`，请逐个文件跑）：
 
 ```powershell
-node test/core.test.mjs     # 29 个
-node test/gate.test.mjs     # 8 个
+node test/core.test.mjs     # 37 个
+node test/gate.test.mjs     # 9 个
 node test/protect.test.mjs  # 5 个
 ```
 

@@ -271,3 +271,69 @@ POST {{"triggerLevel":"hard", ...}}
   仅有代码实现（`lib/backup.js` 的 `cleanup` 与 `readBatchZone`）；
 - HTTP 路由的同源校验（`Origin` 与 `Host` 不一致 → 403）与 `Content-Type` 强制
   只做过手工验证，未进自动化测试。
+
+---
+
+## 七、v0.2.2 修订：PowerShell .NET 删除绕过（2026-11-05）
+
+### 7.1 实测发现的绕过
+
+一轮手工实测用下面的命令删除 `D:\Zip\test` 下的 12 个文件，守卫**没有拦住**：
+
+```powershell
+$target = 'D:\Zip\test'
+Get-ChildItem -LiteralPath $target -File -Force | ForEach-Object {
+  try { [System.IO.File]::Delete($_.FullName); Write-Output ("DELETED: " + $_.FullName) }
+  catch { Write-Output ("FAILED: " + $_.FullName + " :: " + $_.Exception.Message) }
+}
+```
+
+12 个文件全部被永久删除，无备份、无提醒、无确认码。
+
+### 7.2 根因（审计日志证据）
+
+审计里对应的三条 `gate` 事件都是：
+
+```json
+{"plan":"scope","zone":"workspace","targets":["D:\\dsh-workspaces"],"decision":"allow"}
+```
+
+- 分类器（`lib/classify.js`）只认 `Remove-Item` / `rm` / `rd` / `del` 这类命令，
+  **没有任何规则覆盖 PowerShell 的 .NET 文件 API**（`[IO.File]::Delete`、
+  `[IO.Directory]::Delete`、`::Move`、`::Copy`）。
+- `[System.IO.File]::Delete($_.FullName)` 落在语句 `try { … }` 里，被当成未知命令；
+  未知命令按 `opaqueCommand: 'scope'` 把**整个工作目录**当作范围。
+- 工作区在区域模型里是「完全不保护」，于是 `zone=workspace` → 放行。
+  **真实目标 `D:\Zip\test` 从头到尾没有被解析出来**，区域判定根本没有机会生效。
+
+### 7.3 修复
+
+| 位置 | 改动 |
+|---|---|
+| `lib/classify.js` | 新增 `scanPowershellFileApi()`：识别 `[System.IO.*]` / `[IO.*]` 的 `File`/`FileInfo`/`Directory`/`DirectoryInfo` 上的 `Delete`/`Move`/`Copy`，扫描整条语句（含 `try { }` / `ForEach-Object { }` 包裹） |
+| `lib/classify.js` | 字面量路径 → `targets`（走正常区域流程）；**目标是变量/表达式 → `deny`（fail-closed）**，不再回落成工作区 scope |
+| `lib/classify.js` | 新增 `scanCodeWrites()`：解释器里的 `fs.writeFileSync/appendFileSync/copyFileSync/renameSync`、`fs/promises`、`python open(...,'w'/'a'/'x')`、`shutil.copy/copy2/copyfile/move`、`os.rename/os.replace` → 已存在的目标按 `interpreter:write` 处理 |
+
+> 第二项是关键：实测那条命令用的是 `$_.FullName`（变量路径），只加字面量提取挡不住。
+
+### 7.4 新增用例与结果
+
+| 文件 | 用例数 | 通过 | 失败 |
+|---|---:|---:|---:|
+| `test/core.test.mjs` | 29 | 29 | 0 |
+| `test/gate.test.mjs` | 8 | 8 | 0 |
+| `test/protect.test.mjs` | 5 | 5 | 0 |
+| **合计** | **42** | **42** | **0** |
+
+新增（相对 0.2.1）：
+
+- `core`：`.NET` 字面量删除 / 短类型名+目录递归 / **变量路径删除 → deny（实测回归）** /
+  `.NET Move/Copy` / 解释器覆盖已存在文件 / 解释器新建文件 / 解释器只读 `open`；
+- `gate`：端到端回归——用 7.1 的原命令形态打在敏感区，断言 `deny` 且文件仍在；
+  再验证字面量路径会走「备份 + 确认码」，带码重发放行并复用同一批次。
+
+### 7.5 仍未覆盖
+
+- 解释器写入的**动态路径**（`fs.writeFileSync(path.join(...))`）仍退化成 `scope`；
+- 任意外部程序（`D:\tools\cleanup.exe D:\Zip\test`）仍退化成 `scope` → 工作区放行；
+  需要更严可以把 `policy.opaqueCommand` 改成 `block`（代价是 `npm run build` 这类命令也会被拦）。

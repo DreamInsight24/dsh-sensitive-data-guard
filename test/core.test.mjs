@@ -128,6 +128,78 @@ test('classifier: 系统级破坏命令 → deny', () => {
   }
 });
 
+test('classifier: PowerShell .NET 字面量删除 → targets', () => {
+  const p = parseShellCommand(`[System.IO.File]::Delete('D:\\Zip\\test\\a.txt')`, 'D:\\work', DEFAULTS.policy);
+  assert.equal(p.kind, 'targets');
+  assert.deepEqual(p.targets, ['D:\\Zip\\test\\a.txt']);
+});
+
+test('classifier: PowerShell .NET 短类型名 + 目录递归删除 → targets', () => {
+  const p = parseShellCommand(`[IO.Directory]::Delete('D:\\Zip\\test', $true)`, 'D:\\work', DEFAULTS.policy);
+  assert.equal(p.kind, 'targets');
+  assert.deepEqual(p.targets, ['D:\\Zip\\test']);
+});
+
+test('classifier: PowerShell .NET 删除目标为变量 → deny（回归：实测绕过用例）', () => {
+  // 2026-11-05 的真实测试里，这条命令绕过了守卫：
+  //   Get-ChildItem ... | ForEach-Object { [System.IO.File]::Delete($_.FullName) }
+  // 旧版分类器不认识 .NET 调用，整条命令按 opaque → scope=工作区 → 放行。
+  const command = [
+    `$target = 'D:\\Zip\\test'`,
+    'try {',
+    '  Get-ChildItem -LiteralPath $target -File -Force | ForEach-Object {',
+    '    try { [System.IO.File]::Delete($_.FullName); Write-Output ("DELETED: " + $_.FullName) }',
+    '    catch { Write-Output ("FAILED: " + $_.Exception.Message) }',
+    '  }',
+    "  Write-Output '--- remaining ---'",
+    '  Get-ChildItem -LiteralPath $target -Force | Select-Object -ExpandProperty Name',
+    '} catch { Write-Output ("ERROR: " + $_.Exception.Message) }',
+  ].join('\n');
+  const p = parseShellCommand(command, 'D:\\work', DEFAULTS.policy);
+  assert.equal(p.kind, 'deny');
+  assert.match(p.reason, /fail-closed/);
+});
+
+test('classifier: PowerShell .NET Move/Copy → targets', () => {
+  const src = path.join(TMP, 'dotnet-src.txt');
+  const dst = path.join(TMP, 'dotnet-dst.txt');
+  fs.writeFileSync(src, 'x');
+  fs.writeFileSync(dst, 'old');
+  const move = parseShellCommand(`[System.IO.File]::Move('${src}', '${dst}')`, 'D:\\work', DEFAULTS.policy);
+  assert.equal(move.kind, 'targets');
+  assert.ok(move.targets.includes(src), 'Move 的源被移除，应纳入备份');
+  assert.ok(move.targets.includes(dst), 'Move 的目标被覆盖，应纳入备份');
+  const copy = parseShellCommand(`[IO.File]::Copy('${src}', '${dst}')`, 'D:\\work', DEFAULTS.policy);
+  assert.equal(copy.kind, 'targets');
+  assert.deepEqual(copy.targets, [dst], 'Copy 只覆盖目标');
+});
+
+test('classifier: 解释器覆盖已存在文件 → targets', () => {
+  const file = path.join(TMP, 'interpreter-write.txt');
+  fs.writeFileSync(file, 'old');
+  const node = parseShellCommand(`node -e "require('fs').writeFileSync('${file}','x')"`, 'D:\\work', DEFAULTS.policy);
+  assert.equal(node.kind, 'targets');
+  assert.deepEqual(node.targets, [file]);
+  const python = parseShellCommand(`python -c "open(r'${file}','w').write('x')"`, 'D:\\work', DEFAULTS.policy);
+  assert.equal(python.kind, 'targets');
+  assert.deepEqual(python.targets, [file]);
+});
+
+test('classifier: 解释器新建文件 → safe（write-create）', () => {
+  const file = path.join(TMP, 'interpreter-new.txt');
+  const p = parseShellCommand(`node -e "require('fs').writeFileSync('${file}','x')"`, 'D:\\work', DEFAULTS.policy);
+  assert.equal(p.kind, 'safe');
+  assert.deepEqual(p.notes, ['interpreter:write-create']);
+});
+
+test('classifier: 解释器只读 open → safe（不算写入）', () => {
+  const file = path.join(TMP, 'interpreter-read.txt');
+  fs.writeFileSync(file, 'x');
+  const p = parseShellCommand(`python -c "open(r'${file}','r').read()"`, 'D:\\work', DEFAULTS.policy);
+  assert.equal(p.kind, 'safe');
+  assert.deepEqual(p.notes, ['interpreter:clean']);
+});
+
 test('classifier: write 工具新建文件 → safe，覆盖已有 → targets', () => {
   const dir = path.join(TMP, 'write');
   fs.mkdirSync(dir, { recursive: true });

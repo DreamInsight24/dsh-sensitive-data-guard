@@ -170,6 +170,52 @@ test('区域模型：工作区不备份、敏感区备份并要求确认码', as
   core.dispose();
 });
 
+test('回归：PowerShell .NET 删除（变量路径）在敏感区被 fail-closed 阻断', async () => {
+  const root = path.join(TMP, 'root-dotnet');
+  const work = path.join(TMP, 'dotnet-work');
+  const target = path.join(TMP, 'dotnet-target');
+  fs.mkdirSync(target, { recursive: true });
+  fs.writeFileSync(path.join(target, 'a.txt'), 'a');
+  fs.writeFileSync(path.join(target, 'b.txt'), 'b');
+
+  const core = new GateCore(fakeCtx(), {
+    backup: { root, maxBatchFiles: 1000, maxBatchBytes: 1e12, quotaBytes: 1e12 },
+    policy: { triggerLevel: 'hard' },
+  });
+  await core.start();
+  assert.equal(core.ready, true, core.initError ?? '');
+
+  // 2026-11-05 实测里被放行的那条命令形态：删的是变量路径。
+  const command = [
+    `$target = '${target}'`,
+    'Get-ChildItem -LiteralPath $target -File -Force | ForEach-Object {',
+    '  try { [System.IO.File]::Delete($_.FullName); Write-Output ("DELETED: " + $_.FullName) }',
+    '  catch { Write-Output ("FAILED: " + $_.Exception.Message) }',
+    '}',
+  ].join('\n');
+  const exec = execFor(command, work, 'call-dotnet');
+  const decision = await core.onPreExecute(exec, async () => ({ kind: 'allow' }));
+  assert.equal(decision.kind, 'deny', '变量路径的 .NET 删除必须被阻断');
+  assert.match(String(decision.reason), /fail-closed/);
+  assert.ok(fs.existsSync(path.join(target, 'a.txt')), '被阻断时不应删除任何文件');
+
+  // 字面量路径的 .NET 删除：敏感区 → 备份 + 确认码。
+  const literalPath = path.join(target, 'a.txt');
+  const literal = execFor(`[System.IO.File]::Delete('${literalPath}')`, work, 'call-dotnet-2');
+  const literalDecision = await core.onPreExecute(literal, async () => ({ kind: 'allow' }));
+  assert.equal(literalDecision.kind, 'deny');
+  assert.match(String(literalDecision.reason), /确认码：\d{4}/);
+  assert.match(String(literalDecision.reason), /已经提前备份/);
+
+  const code = /确认码：(\d{4})/.exec(String(literalDecision.reason))[1];
+  const retry = execFor(`$env:DSH_GUARD_CONFIRM='${code}'; [System.IO.File]::Delete('${literalPath}')`, work, 'call-dotnet-3');
+  const retryDecision = await core.onPreExecute(retry, async () => ({ kind: 'allow' }));
+  assert.equal(retryDecision.kind, 'allow');
+  assert.ok(core.tokens.get('call-dotnet-3').batchId, '带码放行应复用备份批次');
+
+  core.dispose();
+});
+
 test('受保护目录优先于「工作区不保护」的短路', async () => {
   const root = path.join(TMP, 'root-prot');
   const work = path.join(TMP, 'prot-work');

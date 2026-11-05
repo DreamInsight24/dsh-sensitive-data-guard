@@ -294,6 +294,7 @@ policy.protectedPaths = dedupe(baseProtectedPaths ∪ uiProtectedPaths)
 | 目标命中保护目录 | `deny` |
 | 未知工具 | 默认 `deny` |
 | 命令解析不出目标 | 按 `scope` 备份整个工作目录，再决定 |
+| 认出是 .NET 删除/移动/复制，但目标是变量/表达式 | `deny`（不回落成工作区 scope） |
 | 用户 `emergencyBypass` | 全部放行，仅审计（手工改配置才能开） |
 | 插件被停用/卸载 | 立即失效；`dispose()` 置位后残留包装层也短路成放行，并还原 `ctx.shell.execute` |
 
@@ -318,12 +319,12 @@ policy.protectedPaths = dedupe(baseProtectedPaths ∪ uiProtectedPaths)
 
 ## 12. 测试策略
 
-34 个用例，全部离线（不依赖 DSH Host），按文件直接跑：
+42 个用例，全部离线（不依赖 DSH Host），按文件直接跑：
 
 | 文件 | 数量 | 关注点 |
 |---|---|---|
-| `test/core.test.mjs` | 22 | 分类器、路径、备份引擎、配额、manifest、还原、审计 |
-| `test/gate.test.mjs` | 7 | 钩子接线、区域模型+确认码全流程、受保护目录优先于工作区短路、设置覆盖不得清空配置底线、`cwdFor` 回落、非法 cwd、fail-closed |
+| `test/core.test.mjs` | 29 | 分类器、路径、备份引擎、配额、manifest、还原、审计 |
+| `test/gate.test.mjs` | 8 | 钩子接线、区域模型+确认码全流程、.NET 删除回归、受保护目录优先于工作区短路、设置覆盖不得清空配置底线、`cwdFor` 回落、非法 cwd、fail-closed |
 | `test/protect.test.mjs` | 5 | `.gitignore` 风格保护模式（含 `!`、跨层、连坐） |
 
 本机沙箱下 `node --test test/` 会因 piped stdio 报 `spawn EPERM`，必须逐文件执行。
@@ -334,8 +335,9 @@ policy.protectedPaths = dedupe(baseProtectedPaths ∪ uiProtectedPaths)
 
 ## 13. 已知边界
 
-1. 解释器写入（`node -e "fs.writeFileSync(...)"`）没有删除语义 → 不按保护目录检查。
-   自保护防的是删除/卸载，不是防同权限改写。
+1. 解释器写入：字面量路径的 `node -e "fs.writeFileSync('D:\a.txt',…)"`、
+   `python -c "open('D:/a.txt','w')"` 已纳入备份/保护目录检查；目标由变量或表达式拼出时
+   仍只能退化成 `scope`。自保护防的是删除/卸载与字面量改写，不是防同权限改写。
 2. `cmd /c del`、native 二进制 unlink：只能靠文本解析，可能退化成 scope 备份。
 3. 插件没加载时没有门禁；DSH 没有「插件死了也 fail-closed」的机制。
 4. 与本机 DSH 无关的第三方进程删文件，拦不到（Sysmon 只做取证，且只读检测）。

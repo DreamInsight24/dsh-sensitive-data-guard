@@ -6,7 +6,7 @@
 > 工作区内部完全不干预。备份不成功就硬性阻断，绝不降级为警告。
 
 - 插件包：`@local/dsh-sensitive-data-guard`（Host 插件 + Client 半 + bundle patch）
-- 版本：0.2.1；适配 DSH 0.2.1-rc.2（desktop profile）
+- 版本：0.2.2；适配 DSH 0.2.1-rc.2（desktop profile）
 - 插件目录：`<插件目录>`（目录名是历史遗留，包名才是准的）
 - 默认备份根：`backup/`（相对插件目录解析）
 - 默认级别：`hard`
@@ -195,6 +195,14 @@ C:\Windows\System32
 任何一层判定「需要备份」时，都走同一个备份引擎；备份失败、超限、命中保护目录、
 目标落在插件自身目录、插件内部异常 —— 一律**阻断**。
 
+L0/L1 的命令文本解析覆盖这些破坏性形态：`Remove-Item` / `rm` / `rd` / `del` / `erase`、
+`Move-Item` / `Copy-Item`（覆盖）、`Clear-Content` / `Set-Content` / `Out-File`、
+`robocopy /MOVE`、`git clean` / `reset --hard` / `rm`、`cmd /c del`、
+**PowerShell .NET 文件 API**（`[IO.File]::Delete`、`[IO.Directory]::Delete`、`::Move`、`::Copy`，
+含 `[System.IO.*]` 全写与 `[IO.*]` 简写）、以及解释器里的 `shutil.rmtree`、`os.remove`、
+`fs.rmSync`、`fs.writeFileSync`、`python open(...,'w')` 等。
+**解析不出目标路径的 .NET 删除/移动/复制一律 fail-closed 阻断**，不会回落成工作区放行。
+
 ---
 
 ## 8. 安装 / 停用
@@ -226,9 +234,10 @@ node "bin\delete-guard.mjs" status
 3. **`cmd.exe` 子进程**：`cmd /c del`、`rd` 不经过 Python/Node 钩子，只能靠命令文本解析。
 4. **动态/混淆代码**：清空环境、`python -E/-I`、native 二进制直接 unlink —— 钩子失效，只剩解析层。
 5. **插件自身未加载/崩溃**：没有门禁。DSH 没有「插件死了也 fail-closed」的机制，请用 `status` 健康位自检。
-6. **解释器写入绕过保护目录检查**：`node -e "fs.writeFileSync(...)"` 这类没有删除语义的写入
-   不按保护目录检查。自保护防的是**删除/卸载**，不是防同权限进程改写文件；
-   要严格边界请在操作系统层限制目录写权限。
+6. **解释器写入的动态路径**：字面量路径的 `node -e "fs.writeFileSync('D:\a.txt',…)"`、
+   `python -c "open('D:/a.txt','w')"` 已纳入备份与保护目录检查；但目标由变量/表达式拼出时
+   只能退化成 `scope`（工作区放行）。自保护防的是**删除/卸载**与字面量改写，
+   不是防同权限进程用任意代码改写文件；要严格边界请在操作系统层限制目录写权限。
 7. **超限默认阻断**：单文件 > 256 MiB、单批 > 10 GiB、批文件数 > 5 万、总量 > 50 GiB。
 8. **工作区不设防是设计决定**：工作区里的任何删除都不备份、不提醒、拦不住。
 
@@ -287,8 +296,8 @@ node bin/delete-guard.mjs gc [--root DIR]
 测试（本机沙箱下 `node --test test/` 会因 piped stdio 报 `spawn EPERM`，请逐个文件跑）：
 
 ```powershell
-node test/core.test.mjs     # 22 个
-node test/gate.test.mjs     # 7 个
+node test/core.test.mjs     # 29 个
+node test/gate.test.mjs     # 8 个
 node test/protect.test.mjs  # 5 个
 ```
 

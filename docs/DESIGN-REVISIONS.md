@@ -307,3 +307,60 @@ if (zone === ZONE.WORKSPACE && this.policy.workspaceMode === 'none') { /* 放行
 `test/core.test.mjs` 本来就用 `os.tmpdir()`，无需改动；它里面的 `D:\work`、`D:\data\victim`
 是喂给分类器的合成字符串，不是真实路径。第 6 节里那些 `D:\dsh-workspaces\...` 是当时的迁移记录，
 保留原样作为历史。
+
+---
+
+## 12. v0.2.2：PowerShell .NET 删除绕过（2026-11-05）
+
+### 12.1 缺陷
+
+实测命令（删除 `D:\Zip\test` 下 12 个文件）绕过了守卫：
+
+```powershell
+$target = 'D:\Zip\test'
+Get-ChildItem -LiteralPath $target -File -Force | ForEach-Object {
+  try { [System.IO.File]::Delete($_.FullName); Write-Output ("DELETED: " + $_.FullName) }
+  catch { ... }
+}
+```
+
+审计里对应的 `gate` 事件是 `plan:"scope" zone:"workspace" targets:["D:\dsh-workspaces"] decision:"allow"`。
+
+### 12.2 根因
+
+`lib/classify.js` 的删除识别只覆盖 `Remove-Item` / `rm` / `rd` / `del` / `erase`、
+`Move-Item` / `Copy-Item`、`cmd /c del`、`robocopy /MOVE`、`git clean|reset --hard|rm`，
+以及解释器里的 `shutil.rmtree` / `os.remove` / `fs.rmSync`。
+**PowerShell 的 .NET 文件 API 完全没有覆盖**：
+
+- `[IO.File]::Delete($_.FullName)` 落在 `try { … }` 语句里，被 `normalizeCommand` 取成 `try`，
+  最终按未知命令处理 → `opaqueCommand: 'scope'` → `scope = workdir`；
+- 工作区是「完全不保护」，于是放行。真实目标 `D:\Zip\test` 从未进入区域判定。
+
+### 12.3 修复
+
+1. `scanPowershellFileApi(stmt)`：正则
+   `/\[\s*(?:(?:system\s*\.\s*)?io\s*\.)?(file|fileinfo|directory|directoryinfo)\s*\]\s*::\s*(delete|move|copy)\b/i`
+   扫描**整条语句**（因此 `try { }` / `ForEach-Object { }` 包裹也能命中），
+   用引号感知的括号配对取出实参，再提取字面量路径。
+2. 判定规则：
+   - 字面量路径 → `targets`，走正常区域流程（敏感区 → 备份 + 确认码）；
+   - **取不出路径（变量/表达式）→ `deny`**。这一条是必须的：实测命令用的就是 `$_.FullName`，
+     只做字面量提取仍然会放它过去。
+3. 顺带补上解释器写文件识别 `scanCodeWrites()`（`fs.writeFileSync` / `copyFileSync` /
+   `renameSync` / `fs/promises` / `python open(...,'w')` / `shutil.copy|move` / `os.rename|replace`）：
+   已存在的目标按 `interpreter:write` 走备份与保护目录检查，新建文件仍是 `safe`。
+   这同时补上了「`node -e "fs.writeFileSync('<插件目录>/…')"` 绕过自保护」这个洞。
+
+### 12.4 验收
+
+- 版本 **0.2.2**（`package.json` 已改）；
+- 自动化测试 **42 通过 / 0 失败**（`core` 29 / `gate` 8 / `protect` 5）；
+- `gate` 里新增端到端回归：用 12.1 的原命令形态打在敏感区，断言 `deny` 且文件未被删除；
+  字面量路径则断言「备份 + 确认码」，带码重发放行并复用同一批次。
+
+### 12.5 仍未覆盖
+
+- 解释器写入的**动态路径**（`fs.writeFileSync(path.join(...))`）→ 仍退化成 `scope`；
+- 任意外部程序（`D:\tools\cleanup.exe D:\Zip\test`）→ 仍退化成 `scope`；
+  需要更严可把 `policy.opaqueCommand` 设为 `block`。

@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://local/dsh-sensitive-data-guard/config.schema.json",
   "title": "敏感数据守卫（Sensitive Data Guard）配置",
-  "description": "敏感数据守卫 0.2.1 的配置结构。实际生效值按三级优先顺序合成：DEFAULTS（lib/defaults.js） < bundle 的 cordis.patch.yml（或用户 profile patch 里按行 id 覆盖的 config） < 插件目录下 data/settings.json（DSH 设置页写入）。深合并规则：对象逐层合并，数组与标量整体覆盖。唯一例外是 policy.protectedPaths：它不做覆盖，而是「配置底线 ∪ 设置页追加」，配置里声明的条目设置页删不掉。",
+  "description": "敏感数据守卫 0.2.2 的配置结构。实际生效值按三级优先顺序合成：DEFAULTS（lib/defaults.js） < bundle 的 cordis.patch.yml（或用户 profile patch 里按行 id 覆盖的 config） < 插件目录下 data/settings.json（DSH 设置页写入）。深合并规则：对象逐层合并，数组与标量整体覆盖。唯一例外是 policy.protectedPaths：它不做覆盖，而是「配置底线 ∪ 设置页追加」，配置里声明的条目设置页删不掉。",
   "type": "object",
   "additionalProperties": false,
   "properties": {

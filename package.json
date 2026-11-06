@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-sensitive-data-guard",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Sensitive Data Guard: zone-aware, fail-closed backup-before-delete gate for DeepSeek Harness",
   "private": true,
   "license": "MIT",
@@ -33,8 +33,7 @@
       "platform": "web",
       "immediately": true,
       "inject": [
-        "@deepseek-ai/dsh-client-ui-settings",
-        "@deepseek-ai/dsh-client-ui-slots"
+        "@deepseek-ai/dsh-client-ui-settings"
       ]
     }
   }

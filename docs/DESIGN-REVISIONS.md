@@ -493,3 +493,52 @@ Get-ChildItem -LiteralPath $target -File -Force | ForEach-Object {
 - `confirmTimeoutMs` 超时后模型看到的是一次失败，重试会再弹一次——这是刻意的，
   防止「放着不管就会放行」；
 - 子代理永远问不到人：设计使然，子代理应把待确认项带回给主会话。
+
+---
+
+## 15. v0.2.5：适配 DSH 0.2.2-rc.1 + 用户文案修正（2026-11-06）
+
+### 15.1 触发原因
+
+DSH 升级到 **0.2.2-rc.1**。需要确认本插件依赖的接口没有变，并把 0.2.4 换弹窗后
+没跟上的用户可见文案改掉。
+
+### 15.2 兼容性复核结论
+
+对着 0.2.2-rc.1 的 `app.asar` 逐项核对，**插件用到的接口全部未变**：
+
+- 工具侧：`tools/pre-execute`、`tools/post-execute`、`ctx.tools.guard`；
+- shell 侧：`ctx.shell.execute(spec)`（含 `env`、`sandboxPolicy.sessionId`），
+  且 `dsh-tool-pwsh` / `dsh-tool-bash` 仍然经过它——深度层依旧拦得到；
+- 界面侧：`ctx.webServer.register({kind,path,handler})`、Client `slots` 服务、
+  `settings.section` 与 `plugins.bundle.config` 两个槽位；
+- 确认侧：`ctx.get('userQuestions').ask()`（仍要求真实存活的根代理）、
+  `ctx.get('agents').get/roots`、`ctx.get('workingDirectory')`；
+- 自保护：`plugin_manager` 的 `set_plugin` / `set_bundle` / `install_bundle` /
+  `remove_bundle` 名称未变。
+
+两处发行版变化（都不影响功能，但值得记录）：
+
+1. `@deepseek-ai/dsh-client-ui-slots` 不再随 DSH 发行。`dsh.client.inject` 里
+   解析不到的模块会被 `client-modules` 静默跳过，所以旧版只是多一行无效条目；0.2.5 删除。
+2. `config.schema.json` DSH 从不读取（`app.asar` 里搜不到该文件名，配置校验来自导出的
+   `Config`）。该文件标注为「仅供参考」，权威配置说明是 `cordis.patch.yml` 的中文注释。
+
+### 15.3 文案修正
+
+0.2.4 把默认确认通道换成弹窗后，`locale/*.json`、`client.js`、`lib/settings.js`、
+`cordis.patch.yml`、`bin/delete-guard.mjs`、`config.schema.json` 里仍写着
+「4 位确认码」，与默认行为不符。0.2.5 统一改为「弹窗确认」。
+
+### 15.4 验收
+
+- 版本 **0.2.5**；
+- 自动化测试 **55 通过 / 0 失败**（`core` 37 / `gate` 13 / `protect` 5），
+  在 DSH 0.2.2-rc.1 环境上重跑；
+- README 从 393 行压到 143 行，改为面向用户的写法（区域、确认流程、安装、设置、
+  备份还原、边界），去掉目录结构、测试命令等面向开发者的内容。
+
+### 15.5 新增边界条目
+
+- **持久 shell 工具**：`tool-pwsh-persistent` 走 `ctx.terminals` 而不是 `ctx.shell`，
+  shell 深度层与运行时钩子都覆盖不到，只剩命令文本解析。本 profile 默认未安装。

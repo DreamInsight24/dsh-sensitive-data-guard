@@ -2,7 +2,7 @@
 
 > 这份文档解释「为什么这样设计」，以及每个判断发生在代码的哪一层。
 > 面向要改代码的人；只想用的话看 `README.md`。
-> 目标机器：Windows，DSH Desktop 0.2.1-rc.2（desktop profile）。
+> 目标机器：Windows，DSH Desktop 0.2.2-rc.1（desktop profile）。
 
 代码位置：`<插件目录>`；包名 `@local/dsh-sensitive-data-guard`。
 
@@ -56,7 +56,7 @@ RANK = { workspace: 0, dsh: 1, sensitive: 2 }
 桌面版里 `process.cwd()` 是 profile 目录（`C:\Users\<u>\.dsh\profiles\desktop`），
 **它本身就在 `.dsh` 里面**。早期实现把它当工作区根，结果：
 
-- 工作区里的删除被判定成 `sensitive` → 每次都要确认码（烦）；
+- 工作区里的删除被判定成 `sensitive` → 每次都弹窗确认（烦）；
 - 审计里出现 `zone:"workspace" targets:["C:\Users\...\.dsh\profiles\desktop"]`（错）。
 
 现在的回落链（按可信度递减，逐层 try）：

@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://local/dsh-sensitive-data-guard/config.schema.json",
   "title": "敏感数据守卫（Sensitive Data Guard）配置",
-  "description": "敏感数据守卫 0.2.4 的配置结构。实际生效值按三级优先顺序合成：DEFAULTS（lib/defaults.js） < bundle 的 cordis.patch.yml（或用户 profile patch 里按行 id 覆盖的 config） < 插件目录下 data/settings.json（DSH 设置页写入）。深合并规则：对象逐层合并，数组与标量整体覆盖。唯一例外是 policy.protectedPaths：它不做覆盖，而是「配置底线 ∪ 设置页追加」，配置里声明的条目设置页删不掉。",
+  "description": "敏感数据守卫 0.2.5 的配置结构。本文件是给人看的参考，DSH 不会读取它（DSH 的配置校验来自插件导出的 Config，本插件刻意不导出）；真正生效的配置以 cordis.patch.yml 里的中文注释为准。实际生效值按三级优先顺序合成：DEFAULTS（lib/defaults.js） < bundle 的 cordis.patch.yml（或用户 profile patch 里按行 id 覆盖的 config） < 插件目录下 data/settings.json（DSH 设置页写入）。深合并规则：对象逐层合并，数组与标量整体覆盖。唯一例外是 policy.protectedPaths：它不做覆盖，而是「配置底线 ∪ 设置页追加」，配置里声明的条目设置页删不掉。",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -163,13 +163,13 @@
           "type": "string",
           "enum": ["soft", "medium", "hard"],
           "default": "hard",
-          "description": "敏感区的提醒级别，可在 DSH「设置 → 敏感数据守卫」页里改。soft：仅备份，不提醒也不阻断；medium：文件数 ≥ mediumMinFiles 或体积 ≥ mediumMinBytes 才提醒；hard（默认）：敏感区任何删除/覆盖都先备份再要 4 位确认码。工作区不受该级别影响。"
+          "description": "敏感区的提醒级别，可在 DSH「设置 → 敏感数据守卫」页里改。soft：仅备份，不提醒也不阻断；medium：文件数 ≥ mediumMinFiles 或体积 ≥ mediumMinBytes 才提醒；hard（默认）：敏感区任何删除/覆盖都先备份，再弹窗确认。工作区不受该级别影响。"
         },
         "mediumMinFiles": {
           "type": "integer",
           "minimum": 0,
           "default": 10,
-          "description": "medium 级别的文件数阈值。达标即要求确认码。"
+          "description": "medium 级别的文件数阈值。达标即弹窗确认。"
         },
         "mediumMinBytes": {
           "type": "integer",
@@ -186,7 +186,7 @@
           "type": "string",
           "enum": ["none"],
           "default": "none",
-          "description": "工作区（当前会话 cwd）的处理方式。none = 完全不保护：不备份、不提醒、不阻断，只写审计（默认，也是唯一受支持的取值）。改成其它值会让工作区按敏感区流程处理（先备份、必要时要求确认码），不推荐。"
+          "description": "工作区（当前会话 cwd）的处理方式。none = 完全不保护：不备份、不提醒、不阻断，只写审计（默认，也是唯一受支持的取值）。改成其它值会让工作区按敏感区流程处理（先备份、必要时弹窗确认），不推荐。"
         },
         "unknownTool": {
           "type": "string",

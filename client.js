@@ -100,7 +100,7 @@ window.__ModuleLoader__.load({
           setMinBytes(String(body.settings.mediumMinBytes));
           setPaths((body.settings.protectedPaths || []).join('\n'));
           setNotice(body.loosened
-            ? { kind: 'warn', text: `已保存，但这是一次**放宽**：${body.from} → ${body.to}。守卫仍在运行，只是敏感区不再要求确认码。` }
+            ? { kind: 'warn', text: `已保存，但这是一次**放宽**：${body.from} → ${body.to}。守卫仍在运行，只是敏感区不再弹窗确认。` }
             : { kind: 'ok', text: '已保存并立即生效。' });
         } catch (error) {
           setNotice({ kind: 'err', text: `保存失败：${error.message}` });
@@ -114,12 +114,12 @@ window.__ModuleLoader__.load({
       return h('div', { style: S.root },
         embedded
           ? h('p', { style: S.lead },
-            '只保护 .dsh 与工作区之外：敏感区删除先备份并要求 4 位确认码；.dsh 静默自动备份；工作区完全不干预。',
+            '只保护 .dsh 与工作区之外：敏感区删除先备份，再弹窗请你确认；.dsh 静默自动备份；工作区完全不干预。',
           )
           : h('div', {},
             h('h1', { style: S.h1 }, '敏感数据守卫'),
             h('p', { style: S.lead },
-              '只保护 .dsh 与工作区之外：敏感区删除先备份并要求 4 位确认码；.dsh 静默自动备份；工作区完全不干预。',
+              '只保护 .dsh 与工作区之外：敏感区删除先备份，再弹窗请你确认；.dsh 静默自动备份；工作区完全不干预。',
             ),
           ),
 
@@ -153,7 +153,7 @@ window.__ModuleLoader__.load({
           ),
           pendingLoosen
             ? h('div', { style: S.warn },
-              `注意：从 ${settings.triggerLevel} 调到 ${level} 是放宽限制。保存后会立刻生效——敏感区的删除将不再要求你输入确认码。`,
+              `注意：从 ${settings.triggerLevel} 调到 ${level} 是放宽限制。保存后会立刻生效——敏感区的删除将不再弹窗确认。`,
             )
             : null,
         ),
@@ -219,7 +219,7 @@ window.__ModuleLoader__.load({
     function BundleConfig({ view } = {}) {
       if (view === 'summary') {
         return h('span', { style: S.tiny },
-          '敏感区删除先备份、再要 4 位确认码；.dsh 静默备份；工作区不干预。',
+          '敏感区删除先备份、再弹窗确认；.dsh 静默备份；工作区不干预。',
         );
       }
       return h(Section, { embedded: true });

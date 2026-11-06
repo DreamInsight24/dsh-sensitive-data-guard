@@ -2,6 +2,7 @@
 
 - 报告日期：2026-11-05（Asia/Shanghai；审计日志时间戳为 UTC）
 - 机器：本机 Windows，DSH Desktop 0.2.1-rc.2，profile `desktop`
+  （0.2.5 的兼容性复核与回归测试改在 DSH Desktop 0.2.2-rc.1 上执行，见第十节）
 - 插件：`@local/dsh-sensitive-data-guard@0.2.1`（0.2.0 的区域模型 + 本轮保护目录合并修复），
   安装方式 `plugin_manager install_bundle`（本地目录 link）
 - 插件目录：`<插件目录>`
@@ -450,3 +451,57 @@ Agent 看不见、用户在弹窗里直接允许或拦截，不需要和 Agent �
 
 - 真机弹窗的**视觉呈现**只能人工确认（自动化测试用假 `userQuestions` 校验的是决策链）；
 - 关掉浏览器/纯 CLI 时无法弹窗，按设计一律阻断（可切 `confirmVia: 'code'`）。
+
+
+---
+
+## 十、v0.2.5：DSH 0.2.2-rc.1 兼容性复核 + 文案修正（2026-11-06）
+
+### 10.1 兼容性复核（对着 0.2.2-rc.1 的 `app.asar` 逐项核过）
+
+从 `resources\app.asar` 重新索引并取出相关包，确认本插件用到的接口全部未变：
+
+| 接口 | 0.2.2-rc.1 状态 |
+|---|---|
+| `tools/pre-execute` 瀑布（`exec, next` → `{kind:'allow'\|'deny'\|'cancel'\|'ask'}`） | 未变（`dsh-tools/lib/pipeline.js`） |
+| `tools/post-execute` 瀑布（`{kind:'accept',content}` / `{kind:'block',feedback}`） | 未变 |
+| `ctx.tools.guard(exec) → string \| undefined` | 未变 |
+| `ctx.shell.execute(spec)`，`ShellExecSpec.env` / `sandboxPolicy.sessionId` | 未变（`dsh-shell`） |
+| `dsh-tool-pwsh` / `dsh-tool-bash` 仍调用 `ctx.shell.execute` | 是（shell 深度层仍然拦得到） |
+| `ctx.webServer.register({kind,path,handler})` | 未变（`dsh-host-webserver`） |
+| `ctx.get('userQuestions').ask({questions,agent,signal})` | 未变，仍要求真实存活根代理（`CALLER_NOT_LIVE` / `DELEGATED_CALLER` / `NO_PROVIDER`） |
+| `ctx.get('agents').get(id)` / `.roots()` | 未变 |
+| `ctx.get('workingDirectory')` | 未变 |
+| Client `slots` 服务与 `settings.section` / `plugins.bundle.config` 两个槽位 | 未变，注册项要求一致 |
+| `plugin_manager` 的 `set_plugin` / `set_bundle` / `install_bundle` / `remove_bundle` | 未变，自保护仍然有效 |
+
+两处需要注意：
+
+- `@deepseek-ai/dsh-client-ui-slots` **不在 0.2.2-rc.1 的发行包里**。`dsh.client.inject` 里
+  解析不到的模块会被静默跳过（`client-modules` 的 `arriveGraphRow`：`if (dependency !== void 0)`），
+  所以旧版只是多写了一行无效条目，不影响加载；0.2.5 已删掉它。
+- `config.schema.json` **DSH 从不读取**：整个 `app.asar` 里搜不到 `config.schema.json` 这个文件名，
+  配置校验来自插件导出的 `Config`（本插件刻意不导出，因为本地 bundle 无法 import
+  `@deepseek-ai/schemastery`）。该文件自 0.2.5 起标注为「仅供参考」。
+
+### 10.2 文案修正
+
+0.2.4 把默认确认通道换成弹窗后，多处**用户可见**文案仍写着「4 位确认码」，与默认行为不符。
+0.2.5 改为「弹窗确认」：`locale/zh.json`、`locale/en.json`、`client.js`（设置页说明、
+插件页摘要、放宽告警）、`lib/settings.js` 的 `LEVEL_SCOPE`、`cordis.patch.yml` 注释、
+`bin/delete-guard.mjs` 的 dry-run 提示、`config.schema.json` 描述。
+
+### 10.3 回归测试
+
+| 文件 | 用例数 | 通过 | 失败 |
+|---|---:|---:|---:|
+| `test/core.test.mjs` | 37 | 37 | 0 |
+| `test/gate.test.mjs` | 13 | 13 | 0 |
+| `test/protect.test.mjs` | 5 | 5 | 0 |
+| **合计** | **55** | **55** | **0** |
+
+### 10.4 仍未覆盖
+
+- 真机弹窗在 0.2.2-rc.1 上的视觉呈现与交互仍只能人工确认；
+- 本 profile 未安装 `tool-pwsh-persistent`，该工具走 `ctx.terminals` 而非 `ctx.shell`，
+  shell 深度层覆盖不到（0.2.5 已写入 README 的边界清单）。

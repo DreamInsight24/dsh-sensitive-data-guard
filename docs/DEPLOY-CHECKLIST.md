@@ -1,6 +1,6 @@
 # 敏感数据守卫 部署清单（一页）
 
-- 插件：`@local/dsh-sensitive-data-guard@0.2.4`
+- 插件：`@local/dsh-sensitive-data-guard@0.2.5`
 - 行 id：`dsh-sensitive-data-guard`
 - 插件目录：`<插件目录>`
 - 备份根：`backup/`（相对插件目录解析）
@@ -13,9 +13,9 @@
 
 ## 1. 前置检查（1 分钟）
 
-- [ ] DSH Desktop 0.2.1-rc.2，profile 为 `desktop`
+- [ ] DSH Desktop 0.2.2-rc.1，profile 为 `desktop`
 - [ ] 插件目录完整：`package.json` 里
-      `name` 为 `@local/dsh-sensitive-data-guard`、`version` 为 `0.2.4`
+      `name` 为 `@local/dsh-sensitive-data-guard`、`version` 为 `0.2.5`
 - [ ] `package.json` 的 `dsh` 段同时含 `bundle.patch`（`./cordis.patch.yml`）与
       `client`（`platform: "web"`、`immediately: true`），`exports` 里有 `"./client"`
 - [ ] Sysmon 在运行：`Get-Service Sysmon64,SysmonDrv` 均为 Running（插件只读检测，不会改动它）
@@ -32,7 +32,7 @@
 - [ ] 让模型执行：`plugin_manager` → `install_bundle`，target = `<插件目录>`
       （或在插件页用「本地目录安装」指向同一路径）
 - [ ] 预期返回：`"stage":"enable"`、`"application":"applied"`、`"warnings":[]`，
-      并显示 `+ @local/dsh-sensitive-data-guard 0.2.4 <- <插件目录>`
+      并显示 `+ @local/dsh-sensitive-data-guard 0.2.5 <- <插件目录>`
 
 **确认成功**：返回里的 `application` 必须是 `applied`——它才是「已生效」的判据，
 不要用日志、进程列表或页面情况推断。
@@ -88,24 +88,25 @@
 用一条不可能成功的路径探测，不会破坏任何东西：
 
 - [ ] 让模型执行：`Remove-Item -LiteralPath 'D:\__dg-deploy-probe__' -Recurse -Force`
-- [ ] 应被拦截，返回里含：
-      - `🛑 敏感区删除已拦截（未执行）`
-      - `区域：敏感区（.dsh 与工作区之外）`、`级别：hard`
-      - 逐目录明细 + 合计
-      - `已经提前备份：…`、`备份目录：…`、`还原命令：…`
-      - **最后一行的 4 位确认码**（如 `确认码：3480`）
+- [ ] 工具调用**停在「运行中」**，界面弹出确认卡片，正文含：
+       - `区域：敏感区（.dsh 与工作区之外）`、`级别：hard`
+       - 拟删除内容 + 合计
+       - `已经提前备份：…`、`还原命令：…`
+- [ ] 卡片上**不应出现 4 位确认码**（默认 `confirmVia: 'popup'`，模型看不到答案）
+- [ ] 点「拦截」→ 模型收到「用户已拦截」，目标目录未被删
+- [ ] 再点「允许执行」重试一次 → 命令正常执行（探测路径不存在，无副作用）
 
-**失败判定（严重）**：如果这条命令被直接放行、没有任何拦截报告，说明门禁没生效
+**失败判定（严重）**：如果这条命令被直接放行、连确认卡片都没有，说明门禁没生效
 （可能在 `.dsh` 分区里、或 `enabled: false`、或插件未加载）→ **立即停用并排查**。
 
 ### 3.5 工作区探测（确认「不干预」）
 
 - [ ] 让模型在**当前工作区内**建个临时目录并删除：
       `New-Item -ItemType Directory '<工作区>\_dg-deploy-ws' -Force; Remove-Item '<工作区>\_dg-deploy-ws' -Recurse -Force`
-- [ ] 应**直接成功**，不应出现确认码
+- [ ] 应**直接成功**，不应弹出确认卡片
 - [ ] 备份批次总数不变（`status` 前后对比 `批次：N`）
 
-**失败判定**：工作区删除被要求确认码 → 工作区判定基准错了
+**失败判定**：工作区删除弹出确认卡片 → 工作区判定基准错了
 （`cwdFor` 回落拿到 `.dsh` 里的目录），检查 `lib/gate.js` 的 `cwdFor` / `zoneForRoots`。
 
 ### 3.6 备份不可写 → 阻断（可选，需临时改 ACL，做完务必撤销）
@@ -174,7 +175,7 @@ DEFAULTS（lib/defaults.js）
 | 钩子文件缺失 | `hooks/python/sitecustomize.py` 或 `hooks/node/delete-guard.cjs` 丢了 | 从版本库恢复；缺失时对应钩子自动禁用并告警，shell 层仍生效 |
 | 设置页空白 / 报「读取设置失败」 | 设置路由没通 | 查 §3.3；门禁本身不受影响 |
 | 敏感区删除被直接放行 | **门禁失效，严重** | 立即停用（第 7 节），查 `enabled`、`emergencyBypass`、审计里有无 `startup` |
-| 工作区删除要确认码 | 工作区基准判定错误 | 见 §3.5 失败判定 |
+| 工作区删除弹出确认卡片 | 工作区基准判定错误 | 见 §3.5 失败判定 |
 | 模型说「无法修改插件代码」 | 自保护在起作用（预期） | 需要改代码时按第 7 节由用户停用 |
 
 ---

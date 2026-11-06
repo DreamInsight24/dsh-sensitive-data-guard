@@ -148,8 +148,8 @@ async function doDryRun(flags, rest) {
     return 2;
   }
   if (plan.kind === 'confirm') {
-    // 解析不出目标：真实门禁会走确认码（不备份）。dry-run 只如实报告。
-    console.log('判定：目标无法静态确定 —— 门禁会拦下来要确认码，且**不会备份**');
+    // 解析不出目标：真实门禁会弹窗确认（不备份）。dry-run 只如实报告。
+    console.log('判定：目标无法静态确定 —— 门禁会拦下来弹窗确认，且**不会备份**');
     console.log(`原因：${plan.reason}`);
     console.log(`处置：policy.unresolvedAction = ${(DEFAULTS.policy.unresolvedAction)}`);
     return 0;

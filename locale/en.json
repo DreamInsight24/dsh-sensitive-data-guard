@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Sensitive Data Guard",
-    "description": "Protects only what lives outside .dsh and the workspace: sensitive-zone deletes are backed up and then confirmed in a dialog, .dsh is silently backed up, and the workspace is left untouched."
+    "description": "Protects only what lives outside .dsh and the workspace: sensitive-zone deletes are backed up and then confirmed in a dialog, .dsh is silently backed up, the workspace is left untouched, and unknown tools ask for your trust in a dialog."
   }
 }

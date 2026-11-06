@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://local/dsh-sensitive-data-guard/config.schema.json",
   "title": "敏感数据守卫（Sensitive Data Guard）配置",
-  "description": "敏感数据守卫 0.2.5 的配置结构。本文件是给人看的参考，DSH 不会读取它（DSH 的配置校验来自插件导出的 Config，本插件刻意不导出）；真正生效的配置以 cordis.patch.yml 里的中文注释为准。实际生效值按三级优先顺序合成：DEFAULTS（lib/defaults.js） < bundle 的 cordis.patch.yml（或用户 profile patch 里按行 id 覆盖的 config） < 插件目录下 data/settings.json（DSH 设置页写入）。深合并规则：对象逐层合并，数组与标量整体覆盖。唯一例外是 policy.protectedPaths：它不做覆盖，而是「配置底线 ∪ 设置页追加」，配置里声明的条目设置页删不掉。",
+  "description": "敏感数据守卫 0.2.6 的配置结构。本文件是给人看的参考，DSH 不会读取它（DSH 的配置校验来自插件导出的 Config，本插件刻意不导出）；真正生效的配置以 cordis.patch.yml 里的中文注释为准。实际生效值按三级优先顺序合成：DEFAULTS（lib/defaults.js） < bundle 的 cordis.patch.yml（或用户 profile patch 里按行 id 覆盖的 config） < 插件目录下 data/settings.json（DSH 设置页写入）。深合并规则：对象逐层合并，数组与标量整体覆盖。唯一例外是 policy.protectedPaths：它不做覆盖，而是「配置底线 ∪ 设置页追加」，配置里声明的条目设置页删不掉。policy.safeTools 同理：配置底线 ∪ 设置页/信任弹窗追加。",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -190,9 +190,9 @@
         },
         "unknownTool": {
           "type": "string",
-          "enum": ["deny", "allow-audit"],
-          "default": "deny",
-          "description": "不在安全清单里的工具：deny 阻断（默认）或 allow-audit 放行并审计。"
+          "enum": ["prompt", "deny", "allow-audit"],
+          "default": "prompt",
+          "description": "不在安全清单里的工具：prompt 弹窗问用户（默认；可「信任并加入白名单」或「仅本次允许」，弹窗送不到则 fail-closed 阻断）、deny 直接阻断、allow-audit 放行并审计。受信任工具写入 policy.safeTools，之后按只读处理。"
         },
         "opaqueCommand": {
           "type": "string",
@@ -228,7 +228,7 @@
           "type": "array",
           "items": { "type": "string" },
           "default": [],
-          "description": "追加的只读工具名（并入内置安全清单）。"
+          "description": "追加的受信任工具名（并入安全清单，按只读处理）。未知工具在信任弹窗里点「信任并加入白名单」会写这里（data/settings.json）。已知的删除/覆盖/移动类工具与 plugin_manager 不能加白。"
         },
         "safeCommands": {
           "type": "array",

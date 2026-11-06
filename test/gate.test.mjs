@@ -289,6 +289,12 @@ test('目标解析不出：走确认码放行（无备份），报告必须写�
 function fakeCtxWithUser(choice) {
   const agent = { id: 'session-test' };
   const seen = [];
+  const LABEL = {
+    allow: '允许执行',
+    deny: '拦截',
+    trust: '信任并加入白名单',
+    once: '仅本次允许',
+  };
   const ctx = {
     logger: { info() {}, warn() {}, error() {} },
     workingDirectory: null,
@@ -296,6 +302,17 @@ function fakeCtxWithUser(choice) {
     get(name) {
       if (name === 'agents') {
         return { get: (id) => (id === 'session-test' ? agent : undefined), roots: () => [agent] };
+      }
+      if (name === 'tools') {
+        return {
+          get: (toolName) => (toolName === 'config2ds'
+            ? {
+                name: 'config2ds',
+                description: '把配置转换成 DS 格式（只读）',
+                parameters: { type: 'object', properties: { action: { type: 'string', enum: ['doc', 'json'] } } },
+              }
+            : undefined),
+        };
       }
       if (name === 'userQuestions') {
         return {
@@ -309,7 +326,7 @@ function fakeCtxWithUser(choice) {
             return {
               answers: [{
                 id: request.questions[0].id,
-                selected: [choice === 'allow' ? '允许执行' : '拦截'],
+                selected: [LABEL[choice] ?? '拦截'],
               }],
             };
           },
@@ -473,14 +490,182 @@ test('cwd 落在 .dsh 里时，不能把工作区目标误判成「工作区」'
   core.dispose();
 });
 
-test('fail-closed：未知工具默认拒绝；备份根不可用时拒绝', async () => {
+test('fail-closed：未知工具默认弹窗；问不到人时阻断', async () => {
   const root = path.join(TMP, 'root2');
-  const core = new GateCore(fakeCtx(), { backup: { root } });
+  const core = new GateCore(fakeCtx(), { backup: { root } }, { settingsDir: path.join(TMP, 'settings-failclosed') });
   await core.start();
   const unknown = { name: 'mystery_tool', callId: 'u1', arguments: {}, agent: { id: 's' } };
   const decision = await core.onPreExecute(unknown, async () => ({ kind: 'allow' }));
   assert.equal(decision.kind, 'deny');
-  assert.ok(String(decision.reason).includes('未知工具'));
+  assert.match(String(decision.reason), /mystery_tool/);
+  assert.match(String(decision.reason), /fail-closed/);
+  // prompt 模式下异步路径已经处理过，同步 guard 不应再重复阻断。
+  assert.equal(core.guard(unknown), undefined);
+  core.dispose();
+});
+
+test('unknownTool=deny：未知工具直接阻断，不弹窗', async () => {
+  const ctx = fakeCtxWithUser('allow');
+  const core = new GateCore(ctx, {
+    backup: { root: path.join(TMP, 'root-unknown-deny') },
+    policy: { unknownTool: 'deny' },
+  }, { settingsDir: path.join(TMP, 'settings-unknown-deny') });
+  await core.start();
+  const unknown = { name: 'mystery_tool', callId: 'u2', arguments: {}, agent: { id: 'session-test' } };
+  const decision = await core.onPreExecute(unknown, async () => ({ kind: 'allow' }));
+  assert.equal(decision.kind, 'deny');
+  assert.match(String(decision.reason), /未知工具/);
+  assert.equal(ctx.seen.length, 0, 'deny 模式不应弹窗');
   assert.ok(typeof core.guard(unknown) === 'string');
+  core.dispose();
+});
+
+test('未知工具：弹窗摊开工具信息与本次参数，信任后加入白名单并放行', async () => {
+  const settingsDir = path.join(TMP, 'settings-trust');
+  const ctx = fakeCtxWithUser('trust');
+  const core = new GateCore(ctx, {
+    backup: { root: path.join(TMP, 'root-trust') },
+    policy: { unknownTool: 'prompt' },
+  }, { settingsDir });
+  await core.start();
+  assert.equal(core.ready, true, core.initError ?? '');
+
+  const exec = {
+    name: 'config2ds', callId: 'u3', arguments: { action: 'doc' },
+    agent: { id: 'session-test' }, signal: new AbortController().signal,
+  };
+  const decision = await core.onPreExecute(exec, async () => ({ kind: 'allow' }));
+  assert.equal(decision.kind, 'allow');
+  assert.ok(core.policy.safeTools.includes('config2ds'), '信任后应立刻生效');
+  assert.equal(core.guard(exec), undefined);
+
+  // 设置文件已持久化，重启后仍然受信任。
+  const saved = JSON.parse(fs.readFileSync(path.join(settingsDir, 'data', 'settings.json'), 'utf8'));
+  assert.ok(saved.safeTools.includes('config2ds'));
+
+  // 弹窗内容必须摊开工具说明与本次调用参数。
+  assert.equal(ctx.seen.length, 1);
+  const question = ctx.seen[0].questions[0];
+  assert.match(question.detail, /config2ds/);
+  assert.match(question.detail, /把配置转换成 DS 格式/);
+  assert.match(question.detail, /"action"\s*:\s*"doc"/);
+  assert.match(question.detail, /不在守卫的安全清单里/);
+  assert.deepEqual(
+    question.options.map((o) => o.label),
+    ['信任并加入白名单', '仅本次允许', '拦截'],
+  );
+
+  // 第二次调用同一工具：不再弹窗，直接放行。
+  const exec2 = { ...exec, callId: 'u4' };
+  const decision2 = await core.onPreExecute(exec2, async () => ({ kind: 'allow' }));
+  assert.equal(decision2.kind, 'allow');
+  assert.equal(ctx.seen.length, 1, '已信任的工具不应再弹窗');
+  core.dispose();
+});
+
+test('未知工具：仅本次允许 → 放行但不加白，下次仍问', async () => {
+  const ctx = fakeCtxWithUser('once');
+  const core = new GateCore(ctx, {
+    backup: { root: path.join(TMP, 'root-once') },
+    policy: { unknownTool: 'prompt' },
+  }, { settingsDir: path.join(TMP, 'settings-once') });
+  await core.start();
+
+  const exec = {
+    name: 'config2ds', callId: 'u5', arguments: { action: 'doc' },
+    agent: { id: 'session-test' }, signal: new AbortController().signal,
+  };
+  const decision = await core.onPreExecute(exec, async () => ({ kind: 'allow' }));
+  assert.equal(decision.kind, 'allow');
+  assert.ok(!core.policy.safeTools.includes('config2ds'), '仅本次允许不应写入白名单');
+
+  const exec2 = { ...exec, callId: 'u6' };
+  const decision2 = await core.onPreExecute(exec2, async () => ({ kind: 'allow' }));
+  assert.equal(decision2.kind, 'allow');
+  assert.equal(ctx.seen.length, 2, '仅本次允许之后，下次调用仍应弹窗');
+  core.dispose();
+});
+
+test('未知工具：用户拦截 → 阻断', async () => {
+  const ctx = fakeCtxWithUser('deny');
+  const core = new GateCore(ctx, {
+    backup: { root: path.join(TMP, 'root-unknown-deny-user') },
+    policy: { unknownTool: 'prompt' },
+  }, { settingsDir: path.join(TMP, 'settings-unknown-deny-user') });
+  await core.start();
+  const exec = {
+    name: 'config2ds', callId: 'u7', arguments: { action: 'doc' },
+    agent: { id: 'session-test' }, signal: new AbortController().signal,
+  };
+  const decision = await core.onPreExecute(exec, async () => ({ kind: 'allow' }));
+  assert.equal(decision.kind, 'deny');
+  assert.match(String(decision.reason), /config2ds/);
+  assert.ok(!core.policy.safeTools.includes('config2ds'));
+  core.dispose();
+});
+
+test('未知工具：弹窗不可达 → fail-closed 阻断，并提示手工加白', async () => {
+  const ctx = fakeCtxWithUser('throw');
+  const core = new GateCore(ctx, {
+    backup: { root: path.join(TMP, 'root-unknown-none') },
+    policy: { unknownTool: 'prompt' },
+  }, { settingsDir: path.join(TMP, 'settings-unknown-none') });
+  await core.start();
+  const exec = {
+    name: 'config2ds', callId: 'u8', arguments: { action: 'doc' },
+    agent: { id: 'session-test' }, signal: new AbortController().signal,
+  };
+  const decision = await core.onPreExecute(exec, async () => ({ kind: 'allow' }));
+  assert.equal(decision.kind, 'deny');
+  assert.match(String(decision.reason), /fail-closed/);
+  assert.match(String(decision.reason), /policy\.safeTools/);
+  core.dispose();
+});
+
+test('受信任工具：已知破坏性工具不能加白', () => {
+  const core = new GateCore(fakeCtx(), { backup: { root: path.join(TMP, 'root-trust-deny') } }, { settingsDir: path.join(TMP, 'settings-trust-deny') });
+  assert.equal(core.trustTool('delete'), false);
+  assert.equal(core.trustTool('pwsh'), false);
+  assert.equal(core.trustTool('plugin_manager'), false);
+  assert.equal(core.trustTool(''), false);
+  assert.equal(core.trustTool('config2ds'), true);
+  assert.ok(core.policy.safeTools.includes('config2ds'));
+  core.dispose();
+});
+
+test('受信任工具：仍然不能碰受保护目录', async () => {
+  const core = new GateCore(fakeCtx(), {
+    backup: { root: path.join(TMP, 'root-trust-prot') },
+    policy: { safeTools: ['config2ds'], protectedPaths: ['**/trust-secret/*'] },
+  }, { settingsDir: path.join(TMP, 'settings-trust-prot') });
+  await core.start();
+  const target = path.join(TMP, 'trust-secret', 'x.txt');
+  const exec = { name: 'config2ds', callId: 'u9', arguments: { file_path: target }, agent: { id: 's' } };
+  const decision = await core.onPreExecute(exec, async () => ({ kind: 'allow' }));
+  assert.equal(decision.kind, 'deny', '受信任工具也不能写受保护目录');
+  core.dispose();
+});
+
+test('设置页 safeTools：空数组不能清空配置底线', async () => {
+  const settingsDir = path.join(TMP, 'settings-safetools');
+  fs.mkdirSync(path.join(settingsDir, 'data'), { recursive: true });
+  fs.writeFileSync(
+    path.join(settingsDir, 'data', 'settings.json'),
+    JSON.stringify({ safeTools: [] }),
+  );
+  const core = new GateCore(fakeCtx(), {
+    backup: { root: path.join(TMP, 'root-safetools') },
+    policy: { safeTools: ['config-base'] },
+  }, { settingsDir });
+  assert.ok(core.policy.safeTools.includes('config-base'), '配置底线不会被设置文件清空');
+
+  core.applySettings({ safeTools: ['config-ui'] });
+  assert.ok(core.policy.safeTools.includes('config-base'));
+  assert.ok(core.policy.safeTools.includes('config-ui'));
+
+  // 破坏性工具名会被 sanitizePatch 过滤掉。
+  core.applySettings({ safeTools: ['delete', 'config-ui'] });
+  assert.ok(!core.policy.safeTools.includes('delete'));
+  assert.ok(core.policy.safeTools.includes('config-ui'));
   core.dispose();
 });

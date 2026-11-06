@@ -4,7 +4,7 @@
 任何东西；这个插件在**删除发生之前**把它拦下来：先备份，再弹窗问你。备份不成功就硬性阻断，
 绝不降级成一句警告。
 
-- 包名：`@local/dsh-sensitive-data-guard`　版本：0.2.5　适配：DSH 0.2.2-rc.1
+- 包名：`@local/dsh-sensitive-data-guard`　版本：0.2.6　适配：DSH 0.2.2-rc.1
 - 默认备份根：`backup/`（相对本插件目录解析）
 - 默认级别：`hard`（敏感区一律先备份再确认）
 
@@ -65,6 +65,18 @@
 
 `policy.confirmVia: 'code'` 切回旧流程：报告里给 4 位数字，你把它发给模型，模型带前缀重发同一条命令即可放行并复用刚才的备份。**这条通道里模型看得见那个码**，它可以在没人看的情况下自己用掉——只在确实没有界面时才用。
 
+### 不认识的工具
+
+插件工具（比如你自己装的 `config2ds`）不在守卫的内置清单里。默认（`policy.unknownTool: 'prompt'`）守卫会弹一张卡片，把**工具名、注册说明、参数结构、本次调用参数**都摆出来，让你选：
+
+- **信任并加入白名单** → 写进 `data/settings.json`，以后这个工具的所有调用都不再询问，本次立即执行。
+- **仅本次允许** → 只执行这一次，下次仍问。
+- **拦截** → 不执行。
+
+弹窗送不到你（关了浏览器、纯 CLI、从子代理发起）或超时，一律按 fail-closed 阻断。加白名单的工具仍然不能碰保护目录、插件自身和备份根；已知的删除/覆盖类工具（`write`、`edit`、`delete`、`pwsh` 等）不能加白。
+
+想回到「未知工具一律阻断」就设 `policy.unknownTool: 'deny'`。
+
 ---
 
 ## 3. 安装与启用
@@ -101,6 +113,7 @@ UI 里只能改四项：
 | `mediumMinFiles` | medium 的文件数阈值（默认 10） |
 | `mediumMinBytes` | medium 的体积阈值（默认 64 MiB） |
 | `protectedPaths` | 保护目录，一行一个，`!` 开头表示排除 |
+| `safeTools` | 受信任的只读工具名，一行一个（弹窗里点「信任并加入白名单」也会写这里） |
 
 往放宽方向调（`hard → medium → soft`）不会被拦，但会红字警告并写一条审计。
 
@@ -160,6 +173,7 @@ node bin/delete-guard.mjs restore latest --to D:\restore-here --force
 拦得到：
 
 - 所有模型工具：`write` / `edit` 覆盖、`pwsh` / `bash` 命令、删除移动类工具、`plugin_manager` 改动本插件自身。
+- 不在内置清单里的插件工具：默认弹窗问用户是否信任（可加入白名单），不让它们无声通过。
 - 所有 shell 命令在 spawn **之前**完成判定与备份（包装运行中的 `ctx.shell.execute`）。
 - 命令派生的 Python / Node 子进程：注入运行时钩子，`os.remove` / `shutil.rmtree` / `fs.rmSync` / `fs.rename` 等同步校验。
 - Sysmon 状态检测（只读，只告警，不修改任何安全配置）。

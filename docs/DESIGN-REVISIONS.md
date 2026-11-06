@@ -542,3 +542,52 @@ DSH 升级到 **0.2.2-rc.1**。需要确认本插件依赖的接口没有变，�
 
 - **持久 shell 工具**：`tool-pwsh-persistent` 走 `ctx.terminals` 而不是 `ctx.shell`，
   shell 深度层与运行时钩子都覆盖不到，只剩命令文本解析。本 profile 默认未安装。
+
+---
+
+## 16. v0.2.6：未知工具改成「弹窗信任」（2026-11-06）
+
+### 16.1 触发原因
+
+用户本地插件工具 `config2ds` 被守卫拦下：
+
+```
+Error: delete-guard: 未知工具 "config2ds" 不在安全清单中，已阻断（如只读请加入 policy.safeTools）
+```
+
+`policy.safeTools` 虽然存在，但**分类器从不读它**——配置项是死的。而默认 `unknownTool: 'deny'`
+会让所有第三方插件工具直接不可用。用户要求：拦截时改为弹窗，用户信任就加入白名单并允许调用，
+且要把工具信息尽可能摆清楚。
+
+### 16.2 修复
+
+1. **接上 `policy.safeTools`**：`classify.isWhitelistedTool()` 同时进入 `planToolCall()` 与
+   `quickClassify()`。白名单工具按 `safe` 处理（不备份、不检查），但仍然过保护目录检查——
+   信任的是「只读」，不是「可以碰插件目录/备份根」。
+2. **底线**：`classify.isWhitelistableTool()` 禁止把已知的删除/覆盖/移动类工具
+   （`write`/`edit`/`delete`/`pwsh`/...）与 `plugin_manager` 加白。设置页与信任弹窗都受这条约束。
+3. **新增 `policy.unknownTool: 'prompt'`（默认）**：未知工具 → `guardUnknownTool()` →
+   `ctx.userQuestions.ask()` 弹卡片，正文含工具名、注册说明、参数结构、本次调用参数；
+   选项为「信任并加入白名单」/「仅本次允许」/「拦截」。
+   - 信任 → `trustTool()` 写 `data/settings.json` 的 `safeTools`，立刻生效、重启后仍有效；
+   - 仅本次 → 放行一次，下次仍问；
+   - 拦截 / 没有 UI / 子代理 / 超时 → deny（fail-closed）。
+   `confirmVia: 'code'` 时没有弹窗可发，直接 deny 并提示手工加白。
+4. **设置页新增「受信任的工具」卡片**：可编辑 UI 追加项，配置底线只读展示；
+   与 `protectedPaths` 同一套「配置底线 ∪ UI 追加」合并语义。
+5. **审计**：新增 `trust-tool` 事件（tool, callId, sessionId）。
+
+### 16.3 验收
+
+- 版本 **0.2.6**；
+- 自动化测试 **64 通过 / 0 失败**（`core` 38 / `gate` 21 / `protect` 5）；
+- 新增用例：白名单生效与底线、弹窗摊开工具信息、信任后持久化并不再询问、
+  仅本次允许、用户拦截、弹窗不可达 fail-closed、受信任工具不能碰保护目录、
+  设置页空数组不清空底线。
+
+### 16.4 仍未覆盖
+
+- 弹窗视觉呈现只能人工验收；
+- 「仅本次允许」对未知工具同样没有备份：这是用户明确选择的信任方式；
+- 受信任工具如果实际会删除文件，守卫不再拦截——这是「加白 = 信任只读」的固有代价，
+  只能靠弹窗里的工具说明与参数让用户判断。

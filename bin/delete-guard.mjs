@@ -154,6 +154,10 @@ async function doDryRun(flags, rest) {
     console.log(`处置：policy.unresolvedAction = ${(DEFAULTS.policy.unresolvedAction)}`);
     return 0;
   }
+  if (plan.kind === 'unknown') {
+    console.log(`判定：工具「${flags.tool}」不在守卫的安全清单里 —— 门禁会弹窗问用户（policy.unknownTool = ${DEFAULTS.policy.unknownTool}）`);
+    return 0;
+  }
   const roots = plan.kind === 'targets' ? plan.targets : [plan.scope];
   const { config, engine } = makeEngine(flags);
   await engine.init();

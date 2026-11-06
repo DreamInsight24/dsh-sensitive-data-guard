@@ -42,6 +42,7 @@ window.__ModuleLoader__.load({
       const [minFiles, setMinFiles] = useState('10');
       const [minBytes, setMinBytes] = useState('67108864');
       const [paths, setPaths] = useState('');
+      const [safeTools, setSafeTools] = useState('');
       const [saving, setSaving] = useState(false);
       const [notice, setNotice] = useState(null);
 
@@ -57,6 +58,7 @@ window.__ModuleLoader__.load({
           setMinFiles(String(s.mediumMinFiles));
           setMinBytes(String(s.mediumMinBytes));
           setPaths((s.protectedPaths || []).join('\n'));
+          setSafeTools((s.safeTools || []).join('\n'));
         } catch (error) {
           setNotice({ kind: 'err', text: `读取设置失败：${error.message}` });
         } finally {
@@ -71,8 +73,9 @@ window.__ModuleLoader__.load({
         return level !== settings.triggerLevel
           || minFiles !== String(settings.mediumMinFiles)
           || minBytes !== String(settings.mediumMinBytes)
-          || paths !== (settings.protectedPaths || []).join('\n');
-      }, [settings, level, minFiles, minBytes, paths]);
+          || paths !== (settings.protectedPaths || []).join('\n')
+          || safeTools !== (settings.safeTools || []).join('\n');
+      }, [settings, level, minFiles, minBytes, paths, safeTools]);
 
       // 客户端预判：把级别往下调（放宽）就先红字提示，不必等保存。
       const pendingLoosen = settings && LEVEL_ORDER.indexOf(level) < LEVEL_ORDER.indexOf(settings.triggerLevel);
@@ -86,6 +89,7 @@ window.__ModuleLoader__.load({
             mediumMinFiles: Number(minFiles),
             mediumMinBytes: Number(minBytes),
             protectedPaths: paths.split(/\r?\n/).map((line) => line.trim()).filter(Boolean),
+            safeTools: safeTools.split(/\r?\n/).map((line) => line.trim()).filter(Boolean),
           };
           const response = await fetch(API, {
             method: 'POST',
@@ -99,6 +103,7 @@ window.__ModuleLoader__.load({
           setMinFiles(String(body.settings.mediumMinFiles));
           setMinBytes(String(body.settings.mediumMinBytes));
           setPaths((body.settings.protectedPaths || []).join('\n'));
+          setSafeTools((body.settings.safeTools || []).join('\n'));
           setNotice(body.loosened
             ? { kind: 'warn', text: `已保存，但这是一次**放宽**：${body.from} → ${body.to}。守卫仍在运行，只是敏感区不再弹窗确认。` }
             : { kind: 'ok', text: '已保存并立即生效。' });
@@ -107,7 +112,7 @@ window.__ModuleLoader__.load({
         } finally {
           setSaving(false);
         }
-      }, [level, minFiles, minBytes, paths]);
+      }, [level, minFiles, minBytes, paths, safeTools]);
 
       if (loading) return h('div', { style: S.root }, h('p', { style: S.tiny }, '正在读取设置…'));
 
@@ -182,6 +187,35 @@ window.__ModuleLoader__.load({
                   marginTop: '2px',
                 },
               }, settings.configProtectedPaths.join('   ·   ')),
+            )
+            : null,
+        ),
+
+        h('section', { style: S.card },
+          h('p', { style: S.legend }, '受信任的工具（视为只读，不再询问）'),
+          h('textarea', {
+            style: { ...S.textarea, minHeight: '72px' },
+            spellCheck: false,
+            value: safeTools,
+            placeholder: '一行一个工具名，例如：\nconfig2ds\nmy_plugin_tool',
+            onChange: (e) => { setSafeTools(e.target.value); setNotice(null); },
+          }),
+          h('p', { style: S.tiny },
+            '这些工具的所有调用都不再被守卫检查，也不会提前备份。只有确实只读的工具才能加进来；已知的删除/覆盖类工具（write、edit、delete、pwsh 等）不能加白。'
+            + '未知工具在弹窗里点「信任并加入白名单」也会写到这里。',
+          ),
+          (settings && settings.configSafeTools && settings.configSafeTools.length > 0)
+            ? h('div', { style: S.small },
+              '配置文件（cordis.patch.yml）里声明的受信任工具，属于部署底线，在这里只能看不能删：',
+              h('div', {
+                style: {
+                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                  fontSize: '11px',
+                  lineHeight: 1.7,
+                  opacity: 0.8,
+                  marginTop: '2px',
+                },
+              }, settings.configSafeTools.join('   ·   ')),
             )
             : null,
         ),

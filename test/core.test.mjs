@@ -291,6 +291,21 @@ test('classifier: 未知工具 → unknown；quickClassify 同步', () => {
   assert.equal(quickClassify('mystery_tool'), 'unknown');
 });
 
+test('classifier: safeTools 白名单 → safe（已知破坏性工具除外）', () => {
+  const policy = { ...DEFAULTS.policy, safeTools: ['config2ds'] };
+  assert.equal(planToolCall({ name: 'config2ds', args: {}, workdir: 'D:\\work', policy }).kind, 'safe');
+  assert.equal(quickClassify('config2ds', policy), 'safe');
+  assert.equal(quickClassify('config2ds'), 'unknown', '没有 policy 时白名单不生效');
+  assert.equal(quickClassify('config2ds', { ...DEFAULTS.policy, safeTools: [] }), 'unknown');
+
+  // 已知破坏性工具即使写进白名单也仍按破坏性处理（底线）。
+  const dangerous = { ...DEFAULTS.policy, safeTools: ['delete', 'pwsh', 'plugin_manager'] };
+  assert.equal(planToolCall({ name: 'delete', args: { path: 'D:\\x' }, workdir: 'D:\\work', policy: dangerous }).kind, 'targets');
+  assert.equal(quickClassify('delete', dangerous), 'destructive');
+  assert.equal(quickClassify('pwsh', dangerous), 'destructive');
+  assert.equal(quickClassify('plugin_manager', dangerous), 'plugin-manager');
+});
+
 test('backup: 目录备份 + 还原 + 哈希一致', async () => {
   const root = path.join(TMP, 'root1');
   const src = path.join(TMP, 'src1');

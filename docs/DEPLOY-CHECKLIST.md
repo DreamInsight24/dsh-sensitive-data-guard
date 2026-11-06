@@ -1,6 +1,6 @@
 # 敏感数据守卫 部署清单（一页）
 
-- 插件：`@local/dsh-sensitive-data-guard@0.2.5`
+- 插件：`@local/dsh-sensitive-data-guard@0.2.6`
 - 行 id：`dsh-sensitive-data-guard`
 - 插件目录：`<插件目录>`
 - 备份根：`backup/`（相对插件目录解析）
@@ -15,7 +15,7 @@
 
 - [ ] DSH Desktop 0.2.2-rc.1，profile 为 `desktop`
 - [ ] 插件目录完整：`package.json` 里
-      `name` 为 `@local/dsh-sensitive-data-guard`、`version` 为 `0.2.5`
+      `name` 为 `@local/dsh-sensitive-data-guard`、`version` 为 `0.2.6`
 - [ ] `package.json` 的 `dsh` 段同时含 `bundle.patch`（`./cordis.patch.yml`）与
       `client`（`platform: "web"`、`immediately: true`），`exports` 里有 `"./client"`
 - [ ] Sysmon 在运行：`Get-Service Sysmon64,SysmonDrv` 均为 Running（插件只读检测，不会改动它）
@@ -32,7 +32,7 @@
 - [ ] 让模型执行：`plugin_manager` → `install_bundle`，target = `<插件目录>`
       （或在插件页用「本地目录安装」指向同一路径）
 - [ ] 预期返回：`"stage":"enable"`、`"application":"applied"`、`"warnings":[]`，
-      并显示 `+ @local/dsh-sensitive-data-guard 0.2.5 <- <插件目录>`
+      并显示 `+ @local/dsh-sensitive-data-guard 0.2.6 <- <插件目录>`
 
 **确认成功**：返回里的 `application` 必须是 `applied`——它才是「已生效」的判据，
 不要用日志、进程列表或页面情况推断。
@@ -67,7 +67,8 @@
 - [ ] 打开 DSH「设置」，左侧应出现「**敏感数据守卫**」一节
 - [ ] 页面应显示：级别单选（soft / medium / hard，每项带小字范围说明）、
       阈值输入（选中 medium 才出现）、保护目录文本框、**配置基线只读小字**
-      （列出 `cordis.patch.yml` 里声明的保护目录，说明这些删不掉）、保存按钮、
+      （列出 `cordis.patch.yml` 里声明的保护目录，说明这些删不掉）、
+      **受信任的工具**文本框（一行一个工具名，配置底线同样只读列出）、保存按钮、
       `.dsh` 位置 / 保留策略 / 设置文件路径等运行时信息
 
 **失败判定**：设置页没出现 → 多半是 `dsh.client` 或 `exports["./client"]` 有问题，
@@ -79,6 +80,8 @@
       `Invoke-WebRequest -Uri 'http://127.0.0.1:<port>/plugins/dsh-sensitive-data-guard/settings' -UseBasicParsing`
 - [ ] 应返回 200 且 JSON 里 `"ok":true`，`settings` 含 `triggerLevel`、`mediumMinFiles`、
       `mediumMinBytes`、`protectedPaths`（设置页追加的那份）、`configProtectedPaths`（配置底线）、
+      `safeTools`（设置页/信任弹窗追加的那份）、`configSafeTools`（配置底线）、
+      `effectiveSafeTools`（合并后真正生效的）、
       `dshHome`、`retention`、`settingsFile`
 
 **失败判定**：404 → 路由没注册（webServer 不可用或注册冲突）；403 → 跨源了（用同源页面/同机请求）。
@@ -115,6 +118,23 @@
 - [ ] 再删一个敏感区目标 → 应返回 `备份未完成，已阻断：…`
 - [ ] 撤销：`icacls '<备份根>\<YYYY-MM-DD>' /remove:d '<你的SID>'`
 
+### 3.7 未知工具信任弹窗（可选，1 分钟）
+
+插件自带工具（不在守卫内置清单里）默认会弹窗问用户，不会直接阻断：
+
+- [ ] 让模型调用一个本机插件工具（例如 `config2ds`），或任何未加白的第三方工具
+- [ ] 工具调用停在「运行中」，界面弹出卡片，正文含：
+       - `工具名：…`、`工具说明：…`、`参数结构`、`本次调用参数`
+       - ⚠️ 提示「加入白名单后不再检查、也不备份」
+- [ ] 三个选项：`信任并加入白名单` / `仅本次允许` / `拦截`
+- [ ] 点「信任并加入白名单」→ 本次执行；**再调用同一工具不应再弹窗**
+      （`data/settings.json` 的 `safeTools` 里能看到它）
+- [ ] 点「拦截」→ 模型收到「用户已拦截」，工具没有执行
+- [ ] 关掉浏览器/纯 CLI 时调用 → 按 fail-closed 阻断，模型收到「确认弹窗没能送达用户」
+
+**失败判定**：未知工具被直接放行（没弹窗）→ 检查 `policy.unknownTool` 是否被改成了
+`allow-audit`，或 `confirmVia` 是否被改成了 `code`（后者没有弹窗可发，会直接阻断）。
+
 ---
 
 ## 4. 配置入口与优先级
@@ -145,6 +165,9 @@ DEFAULTS（lib/defaults.js）
 >
 > 因此推荐用法：**长期、必须保护**的目录写进 `cordis.patch.yml`（底线，改配置改）；
 > **临时、随手加**的目录在设置页里填（随时可删）。
+>
+> **受信任工具的合并语义**：`policy.safeTools` 与保护目录同一套规则——配置底线 ∪ 设置页/信任弹窗追加。
+> 已知的删除/覆盖/移动类工具与 `plugin_manager` 不能加白（`classify.isWhitelistableTool`）。
 
 ---
 
@@ -153,11 +176,12 @@ DEFAULTS（lib/defaults.js）
 | 需求 | 做法 |
 |---|---|
 | 看状态 / 占用 | `node bin/delete-guard.mjs status`（加 `--json` 出机器可读） |
-| 看审计 | `backup\_audit\YYYY-MM-DD.jsonl`（事件：`startup` / `gate` / `backup` / `confirm` / `confirm-required` / `settings` / `bypass` / `shutdown`） |
+| 看审计 | `backup\_audit\YYYY-MM-DD.jsonl`（事件：`startup` / `gate` / `backup` / `confirm` / `confirm-required` / `settings` / `trust-tool` / `bypass` / `shutdown`） |
 | 预演某条命令要备份多少 | `node bin/delete-guard.mjs dry-run -- <命令>`（不删除、不写备份） |
 | 还原某个批次 | **普通终端**执行 `node bin/delete-guard.mjs restore <批次\|latest> [--force] [--to 目录]` |
 | 清理过期备份 | `node bin/delete-guard.mjs gc`（按分区保留策略清理，审计不删） |
 | 改备份根 | `--root <目录>` 或改配置 `backup.root` |
+| 让某个插件工具不再被拦 | 首次调用时弹窗点「信任并加入白名单」，或在设置页「受信任的工具」里填它的名字 |
 
 保留策略（自动执行，也可手动 `gc`）：
 
@@ -221,3 +245,5 @@ DEFAULTS（lib/defaults.js）
   `set_bundle` / `set_plugin` 命中自身名字会被直接拒绝）——这是刻意的自保护。
 - 修改插件源码前必须由用户停用；插件目录、备份根、审计目录、profile 的
   `cordis.patch.yml`/`cordis.yml`/`package.json` 恒为受保护路径，任何级别下都拒绝修改。
+- 「受信任的工具」按只读处理：加白后它的所有调用都不再被守卫检查、也不备份。
+  只有确实只读的工具才能加白；已知的删除/覆盖类工具不能加白。

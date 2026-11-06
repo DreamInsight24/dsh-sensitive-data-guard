@@ -2,7 +2,8 @@
 
 - 报告日期：2026-11-05（Asia/Shanghai；审计日志时间戳为 UTC）
 - 机器：本机 Windows，DSH Desktop 0.2.1-rc.2，profile `desktop`
-  （0.2.5 的兼容性复核与回归测试改在 DSH Desktop 0.2.2-rc.1 上执行，见第十节）
+  （0.2.5 的兼容性复核与回归测试改在 DSH Desktop 0.2.2-rc.1 上执行，见第十节；
+  0.2.6 的未知工具信任流程在同一环境上回归，见第十一节）
 - 插件：`@local/dsh-sensitive-data-guard@0.2.1`（0.2.0 的区域模型 + 本轮保护目录合并修复），
   安装方式 `plugin_manager install_bundle`（本地目录 link）
 - 插件目录：`<插件目录>`
@@ -505,3 +506,42 @@ Agent 看不见、用户在弹窗里直接允许或拦截，不需要和 Agent �
 - 真机弹窗在 0.2.2-rc.1 上的视觉呈现与交互仍只能人工确认；
 - 本 profile 未安装 `tool-pwsh-persistent`，该工具走 `ctx.terminals` 而非 `ctx.shell`，
   shell 深度层覆盖不到（0.2.5 已写入 README 的边界清单）。
+
+---
+
+## 十一、v0.2.6：未知工具改成「弹窗信任」（2026-11-06）
+
+### 11.1 触发原因
+
+用户本地插件工具 `config2ds` 被默认的 `unknownTool: 'deny'` 拦下。`policy.safeTools` 虽然存在，
+但分类器从不读它，等于死配置；而一律阻断又会让所有第三方插件工具不可用。
+
+### 11.2 改动与用例
+
+- `lib/classify.js`：新增 `isWhitelistableTool()` / `isWhitelistedTool()` / `unknownToolAction()`；
+  `planToolCall()` 与 `quickClassify()` 都接上 `policy.safeTools`；已知破坏性工具与 `plugin_manager` 不能加白。
+- `lib/gate.js`：新增 `guardUnknownTool()`（弹窗正文含工具名、注册说明、参数结构、本次调用参数）、
+  `trustTool()`（写 `data/settings.json`）、`toolInfo()`；`evaluate()` 的 unknown 分支支持 `prompt`；
+  `askHuman()` 改为返回选中项，`promptUser()` 适配；受信任工具仍过保护目录检查。
+- `lib/settings.js`：`sanitizePatch()` 接受并过滤 `safeTools`。
+- `client.js`：设置页新增「受信任的工具」卡片。
+- `bin/delete-guard.mjs`：dry-run 报告未知工具的新处置。
+
+| 文件 | 用例数 | 通过 | 失败 |
+|---|---:|---:|---:|
+| `test/core.test.mjs` | 38 | 38 | 0 |
+| `test/gate.test.mjs` | 21 | 21 | 0 |
+| `test/protect.test.mjs` | 5 | 5 | 0 |
+| **合计** | **64** | **64** | **0** |
+
+新增用例：
+
+- `core`：`safeTools` 白名单 → safe；已知破坏性工具加白无效；
+- `gate`：弹窗摊开工具说明与本次参数、信任后写入设置文件并不再询问、仅本次允许、
+  用户拦截、弹窗不可达 fail-closed、`unknownTool=deny` 不弹窗、受信任工具不能碰保护目录、
+  设置页空数组不清空配置底线。
+
+### 11.3 仍未覆盖
+
+- 真机弹窗的视觉呈现只能人工确认；
+- 「信任并加入白名单」后，该工具的实际行为不再被守卫检查（设计使然，只能靠弹窗里的信息让用户判断）。

@@ -14,7 +14,7 @@
 
 **目标**：DSH 即使处在 `danger-full-access`、审批策略为 `never`、模型完全失控的情况下，
 **也不能在用户不知情时删掉/覆盖工作区之外的数据**。每一次这样的操作都要：
-先备份 → 把「要删什么、多大、备份在哪」摆到用户面前 → 用户输入随机码 → 才放行。
+先备份 → 把「要删什么、多大、备份在哪」摆到用户面前 → 用户在弹窗里确认 → 才放行。
 
 **非目标**（明确不做，做了就是负担）：
 
@@ -88,11 +88,26 @@ RANK = { workspace: 0, dsh: 1, sensitive: 2 }
 disposed / !enabled            → allow（并审计）
 emergencyBypass                → allow（并审计）
 planToolCall(...)              → safe | targets | scope | deny | unknown
-  unknown                      → policy.unknownTool: deny | allow-audit
+  unknown                      → policy.unknownTool: prompt（默认）| deny | allow-audit
   deny                         → deny
-  safe                         → 仍对 write/edit/move/delete 做保护目录检查 → allow
+  safe                         → 仍对 write/edit/move/delete 与受信任工具做保护目录检查 → allow
   targets/scope                → 见下
 ```
+
+未知工具（`prompt`，默认）的细节：
+
+```
+confirmVia !== 'popup' → deny（旧 code 通道没有弹窗，直接 fail-closed 并提示手工加白）
+guardUnknownTool(...) → 弹窗，正文含：工具名 / 注册说明 / 参数结构 / 本次调用参数
+  「信任并加入白名单」→ trustTool() 写 data/settings.json → 本次与以后都放行
+  「仅本次允许」       → 本次放行，下次仍问
+  「拦截」/ 问不到人  → deny（fail-closed）
+```
+
+`policy.safeTools` 是「受信任的只读工具」名单：分类器（`planToolCall` / `quickClassify`）
+把它当 `safe`，但**不能**加白已知的删除/覆盖/移动类工具与 `plugin_manager`
+（`classify.isWhitelistableTool`）。设置页与信任弹窗都会写这份名单，
+设置文件里的同名条目不会被配置底线清空（与 `protectedPaths` 同一套合并语义）。
 
 对 `targets | scope`：
 
@@ -327,7 +342,7 @@ policy.protectedPaths = dedupe(baseProtectedPaths ∪ uiProtectedPaths)
 | 门禁未就绪（`ready=false`） | `deny` |
 | 备份过程中抛错 | `deny`（不降级为警告） |
 | 目标命中保护目录 | `deny` |
-| 未知工具 | 默认 `deny` |
+| 未知工具 | 默认 `prompt`：弹窗问用户（可信任加白或仅本次允许）；`deny` 直接阻断；`allow-audit` 放行并审计 |
 | 命令解析不出目标 | 按 `scope` 备份整个工作目录，再决定 |
 | 认出是 .NET 删除/移动/复制，但目标是变量/表达式 | `deny`（不回落成工作区 scope） |
 | 用户 `emergencyBypass` | 全部放行，仅审计（手工改配置才能开） |
@@ -346,6 +361,7 @@ policy.protectedPaths = dedupe(baseProtectedPaths ∪ uiProtectedPaths)
 | `confirm` | result: `ok` / `wrong-code`, batchId |
 | `confirm-required` | batchId, files, bytes, **zone** |
 | `settings` | by: `ui`, before, after, loosened, patch |
+| `trust-tool` | tool, callId, sessionId（用户在信任弹窗里点「信任并加入白名单」） |
 | `bypass` / `restore` / `sysmon` | 见对应实现 |
 
 `plan:"scope" zone:"workspace" targets:[...]` 这一行是排查区域误判的第一现场。

@@ -59,13 +59,13 @@
           mediumMinFiles: 10          # medium 级别：文件数达到即提醒
           mediumMinBytes: 67108864    # medium 级别：体积达到即提醒（64 MiB）
 
-          unknownTool: 'deny'         # 未知工具：deny（默认）| allow-audit
+          unknownTool: 'prompt'       # 未知工具：prompt 弹窗问用户（默认）| deny 直接阻断 | allow-audit 放行并审计
           opaqueCommand: 'scope'      # 解析不出的 shell 命令：scope（整目录先备份，默认）| block
           confirmVia: 'popup'         # 确认通道：popup 直接弹窗问用户（默认，模型看不到答案）| code 旧的 4 位确认码
           confirmTimeoutMs: 300000    # 弹窗等待上限，超时按 fail-closed 阻断
           unresolvedAction: 'confirm' # 破坏性命令的目标解析不出时：confirm 弹窗确认（默认，无备份）| deny 硬拒 | scope 旧行为
           scopeRoots: []              # 额外保护根
-          safeTools: []               # 追加只读工具名
+          safeTools: []               # 追加受信任的只读工具名（设置页/信任弹窗也会写这里）
           safeCommands: []            # 追加只读命令正则
           volatileRoots: ['%TEMP%', '%LOCALAPPDATA%\Temp', '%LOCALAPPDATA%\npm-cache', '%APPDATA%\npm-cache', '%LOCALAPPDATA%\pnpm', '%APPDATA%\pnpm', '%LOCALAPPDATA%\Yarn', '%USERPROFILE%\.npm', '%USERPROFILE%\.cache']  # 钩子允许删除的易失目录（临时/包缓存）
           # 额外受保护目录（.gitignore 风格模式，支持 ! 排除；插件目录/备份根/审计自动加入）。

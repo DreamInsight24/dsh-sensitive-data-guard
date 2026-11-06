@@ -105,7 +105,7 @@ node bin/delete-guard.mjs status
 
 优先级：`lib/defaults.js` 默认值 < `cordis.patch.yml` 的 `config` < `data/settings.json`。改完立即生效，不用重启。
 
-UI 里只能改四项：
+UI 里只能改五项：
 
 | 字段 | 说明 |
 |---|---|
